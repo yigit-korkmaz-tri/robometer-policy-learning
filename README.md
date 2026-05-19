@@ -2,8 +2,8 @@
 
 A flexible reinforcement \ imitation learning framework supporting multiple algorithms (SAC, IQL, BC), reward models (Robometer, RoboReward), and distributed training. We will soon include detailed guides for DSRL (Diffusion-steering RL) with Pi0/0.5 on LIBERO and Real World tasks.
 
-> **Note**
-> This repository is under active development, so some modules and features may change over time. You may encounter issues when using features that is not yet documented in this README. Please feel free to open an issue — we will do our best to help.
+> **⚠️ Warning**
+> This repository is under active development, so some modules and features may change over time. You may encounter issues when using features that are not yet documented in this README. Please feel free to open an issue — we will do our best to help.
 
 ## Table of Contents
 
@@ -12,8 +12,8 @@ A flexible reinforcement \ imitation learning framework supporting multiple algo
   - [Basic Training](#basic-training-ground-truth-rewards)
   - [Training with Reward Model](#training-with-robometer-reward-model)
   - [Example: Online RL in LIBERO](#example-online-rl-in-libero)
-  - [DSRL + Pi0 on LIBERO - Coming Soon]
 - [Real-World Online RL with DSRL + Remote Reward Labeling - Coming Soon]
+- [Project Structure](#project-structure)
 ---
 
 ## Setup
@@ -194,4 +194,25 @@ Also coming soon: DSRL+Pi0 sanity check command before running real world online
 
 - Algorithm-specific configs:
   `robometer_policy_learning/configs/algorithm/`
+
+## Project Structure
+
+```text
+.
+├── docs/                         # Documentation assets and figures
+├── robometer_policy_learning/    # Main policy learning package
+│   ├── algorithms/               # BC, IQL, SAC, and DSRL algorithm code
+│   ├── buffers/                  # Replay and offline data buffers
+│   ├── configs/                  # Hydra configs for algorithms, envs, and reward models
+│   ├── distributed/              # Distributed training and reward relabeling services
+│   ├── envs/                     # Environment wrappers and task interfaces
+│   ├── loggers/                  # Logging integrations
+│   ├── modules/                  # Policy, critic, and value network modules
+│   ├── robots/                   # Real-robot interfaces
+│   ├── rollouts/                 # Rollout collection utilities
+│   ├── runners/                  # Training and evaluation runners
+│   └── utils/                    # Shared helpers
+├── scripts/                      # Training, evaluation, and server entrypoints
+├── tests/                        # Test suite
+```
 
