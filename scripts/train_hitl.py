@@ -264,7 +264,7 @@ def main(cfg: DictConfig):
                 f"Precollected dataset {precollected_hitl_dataset} has no 'load_dir' in its /meta; "
                 "cannot verify it was collected with the same policy as load_dir."
             )
-        elif os.path.normpath(str(_ds_load_dir)) != os.path.normpath(str(load_dir)):
+        elif os.path.realpath(str(_ds_load_dir)) != os.path.realpath(str(load_dir)):
             raise ValueError(
                 "Precollected HITL dataset was collected with a different policy than the configured "
                 f"load_dir:\n  dataset load_dir = {_ds_load_dir}\n  config  load_dir = {load_dir}\n"
