@@ -10,7 +10,7 @@ debug: false
 # Environment configuration
 env:
   env_name: "robomimic"  # task/robot/controller are read from the robomimic dataset metadata
-  h5_dataset_path: "/home/yigitkorkmaz/datasets/robomimic_lowdim/square/ph/low_dim_converted.hdf5"  # robomimic .h5 to reconstruct the env from
+  h5_dataset_path: "data/robomimic_datasets/robomimic_lowdim/square/ph/low_dim_converted.hdf5"  # robomimic .h5 to reconstruct the env from
   max_episode_steps: 400 # max episode steps for the environment
   use_full_state: true  # Use the full state (default: False). If False, only proprioceptive information will be used. If True, no reward relabeling will be performed.
   use_gt_rewards: true # Use ground truth rewards (default: False). If True, no reward relabeling will be performed. If no reward model is provided, this will be set to True.

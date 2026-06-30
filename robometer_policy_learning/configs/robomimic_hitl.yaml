@@ -15,7 +15,7 @@ debug: false
 # Pretrained policy to start from. load_dir is a pretraining run OUTPUT DIRECTORY containing
 # `.hydra/config.yaml` (env/training/model/policy are read from there) and
 # `checkpoints/<step>/actor.pt`. `checkpoint` selects which <step> (null = latest available).
-load_dir: /home/yigitkorkmaz/robometer-policy-learning/outputs/2026-06-11/16-17-39
+load_dir: checkpoints/square_low_dim/2026-06-11_16-17-39
 checkpoint: 20000
 
 # HITL training algorithm selector (mile | bc | diffusion_mile). Must match the
@@ -63,7 +63,7 @@ hitl:
   offline_sample_ratio: 0.5       # fraction of each batch from the offline buffer; null = live size ratio
   # Intervention source.
   human_mode: simulated                # real (teleop) | simulated (expert policy + criterion)
-  expert_load_dir: /home/yigitkorkmaz/robometer-policy-learning/outputs/2026-06-11/16-17-39           # [simulated] pretraining run dir (or checkpoint dir) for the expert policy
+  expert_load_dir: checkpoints/square_low_dim/2026-06-11_16-17-39           # [simulated] pretraining run dir (or checkpoint dir) for the expert policy
   expert_checkpoint: 50000         # [simulated] which checkpoint <step> for the expert (null = latest)
   # [simulated] criterion: mile | mile_window (Gaussian log-prob) | diffusion_mile |
   # diffusion_mile_paired | diffusion_mile_window (DiffusionActor denoising-score).

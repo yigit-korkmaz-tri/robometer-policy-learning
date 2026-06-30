@@ -15,7 +15,7 @@ debug: false
 # Data-collection (rollout) policy: a pretraining run OUTPUT DIRECTORY containing
 # `.hydra/config.yaml` (env/training/model/policy read from there) and `checkpoints/<step>/actor.pt`.
 # `checkpoint` selects which <step> (null = latest available).
-load_dir: /home/yigitkorkmaz/robometer-policy-learning/outputs/2026-06-11/16-17-39
+load_dir: checkpoints/square_low_dim/2026-06-11_16-17-39
 checkpoint: 20000
 
 hitl:
@@ -32,7 +32,7 @@ hitl:
 
   # ----- intervention source -----
   human_mode: real           # real (teleop) | simulated (expert policy + criterion)
-  expert_load_dir: /home/yigitkorkmaz/robometer-policy-learning/outputs/2026-06-11/16-17-39           # [simulated] pretraining run dir (or checkpoint dir) for the expert policy
+  expert_load_dir: checkpoints/square_low_dim/2026-06-11_16-17-39           # [simulated] pretraining run dir (or checkpoint dir) for the expert policy
   expert_checkpoint: 50000         # [simulated] which checkpoint <step> for the expert (null = latest)
   # [simulated] criterion: mile | mile_window (Gaussian log-prob) | diffusion_mile |
   # diffusion_mile_paired | diffusion_mile_window (DiffusionActor denoising-score).
