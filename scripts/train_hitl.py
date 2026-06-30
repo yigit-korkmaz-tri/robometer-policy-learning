@@ -184,6 +184,23 @@ def _resolve_checkpoint_dir(load_dir: str, checkpoint=None) -> str:
     return os.path.join(ckpt_root, chosen)
 
 
+def _run_identity(path) -> str:
+    """Machine-independent identity of a run dir for provenance matching.
+
+    The dataset's ``/meta`` stores the collection ``load_dir`` as the absolute path on the machine it
+    was collected on, but the same run lives under a different prefix on another machine. So compare
+    only the tail from the last ``checkpoints`` path segment onward (e.g.
+    ``checkpoints/square_low_dim/<timestamp>``), which is stable across machines. Falls back to the
+    last two path components when there is no ``checkpoints`` segment.
+    """
+    parts = os.path.normpath(str(path)).split(os.sep)
+    parts = [p for p in parts if p not in ("", ".")]
+    if "checkpoints" in parts:
+        idx = len(parts) - 1 - parts[::-1].index("checkpoints")  # last 'checkpoints' segment
+        return "/".join(parts[idx:])
+    return "/".join(parts[-2:]) if len(parts) >= 2 else (parts[-1] if parts else str(path))
+
+
 def _read_precollected_meta(path: str) -> dict:
     """Return the provenance metadata dict written under ``/meta`` by collect_hitl_rollout.py (or {})."""
     import json
@@ -264,7 +281,7 @@ def main(cfg: DictConfig):
                 f"Precollected dataset {precollected_hitl_dataset} has no 'load_dir' in its /meta; "
                 "cannot verify it was collected with the same policy as load_dir."
             )
-        elif os.path.realpath(str(_ds_load_dir)) != os.path.realpath(str(load_dir)):
+        elif _run_identity(_ds_load_dir) != _run_identity(load_dir):
             raise ValueError(
                 "Precollected HITL dataset was collected with a different policy than the configured "
                 f"load_dir:\n  dataset load_dir = {_ds_load_dir}\n  config  load_dir = {load_dir}\n"
