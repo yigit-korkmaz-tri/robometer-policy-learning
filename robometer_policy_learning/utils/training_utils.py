@@ -174,6 +174,55 @@ def build_actor_critic_models(
         rprint(actor)
         return actor, None, None
 
+    # Flow Matching: build the bespoke FlowMatchingActor here (like DiffusionActor), reusing the
+    # shared featurizer / image-encoder settings plus the flow-matching hyperparameters from the
+    # algorithm config (offline_algorithm / flow.yaml). FM is BC-like: no critic / v_net.
+    if cfg.alg.offline_alg_name.lower() == "flow":
+        from robometer_policy_learning.algorithms.flow_matching import FlowMatchingActor, FlowMatchingActorConfig
+
+        def _fm(key, default):
+            return OmegaConf.select(cfg, f"offline_algorithm.{key}", default=default)
+
+        # Horizon = #actions sampled jointly = the buffer's chunk_size (1 when unchunked).
+        horizon = cfg.training.chunk_size or 1
+
+        actor_config = FlowMatchingActorConfig(
+            observation_space=new_observation_space,
+            action_space=action_space,
+            preprocess_obs_transform=None,
+            featurizer=featurizer,
+            remove_obs_keys=remove_obs_keys,
+            # Obs-encoder / featurizer settings shared with the MLP policy config.
+            activation=OmegaConf.select(cfg, "policy.mlp.activation", default="relu"),
+            use_layer_norm=OmegaConf.select(cfg, "policy.mlp.use_layer_norm", default=False),
+            dropout_rate=OmegaConf.select(cfg, "policy.mlp.dropout_rate", default=0.0),
+            # Flow matching hyperparameters (from offline_algorithm / flow.yaml).
+            horizon=int(horizon),
+            num_inference_steps=_fm("num_inference_steps", 10),
+            sigma_min=_fm("sigma_min", 0.0),
+            time_embed_scale=_fm("time_embed_scale", 1000.0),
+            clip_sample=_fm("clip_sample", True),
+            clip_sample_range=_fm("clip_sample_range", 1.0),
+            net_type=_fm("net_type", "unet"),
+            diffusion_step_embed_dim=_fm("diffusion_step_embed_dim", 128),
+            unet_down_dims=tuple(_fm("unet_down_dims", (128, 256))),
+            unet_kernel_size=_fm("unet_kernel_size", 5),
+            unet_n_groups=_fm("unet_n_groups", 8),
+            mlp_hidden_dims=tuple(_fm("mlp_hidden_dims", (512, 512, 512))),
+            transformer_d_model=_fm("transformer_d_model", 256),
+            transformer_nhead=_fm("transformer_nhead", 4),
+            transformer_num_layers=_fm("transformer_num_layers", 4),
+            transformer_dim_feedforward=_fm("transformer_dim_feedforward", 1024),
+            transformer_dropout=_fm("transformer_dropout", 0.0),
+            transformer_activation=_fm("transformer_activation", "gelu"),
+            obs_encoder_hidden_dims=tuple(_fm("obs_encoder_hidden_dims", (256, 256))),
+            **image_encoder_kwargs,
+        )
+        actor = FlowMatchingActor(actor_config).to(device)
+        logger.info(f"Actor: {actor.__class__.__name__} (net_type={actor_config.net_type}, horizon={horizon})")
+        rprint(actor)
+        return actor, None, None
+
     if cfg.training.chunk_size is None:
         # MLP architecture
         policy_cfg = cfg.policy

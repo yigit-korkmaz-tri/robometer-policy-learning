@@ -77,6 +77,9 @@ class DPConfig(BaseAlgorithmConfig):
     obs_noise_std: float = 0.0
     action_noise_std: float = 0.0
 
+    # ----- Weighted cloning (HITL SIRIUS / IWR) -----
+    use_weighted_dp: bool = False
+
     # ----- Diagnostics -----
     # If > 0, every N updates run the (expensive) reverse diffusion sampler on the training
     # batch and log the resulting action MSE against the expert actions. 0 disables it.

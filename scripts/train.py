@@ -25,6 +25,7 @@ from robometer_policy_learning.algorithms.bc import BC, BCConfig
 from robometer_policy_learning.algorithms.iql import IQL, IQLConfig
 from robometer_policy_learning.algorithms.sac import SAC, SACConfig
 from robometer_policy_learning.algorithms.dp import DP, DPConfig
+from robometer_policy_learning.algorithms.flow_matching import FlowMatching, FlowMatchingConfig
 from robometer_policy_learning.rollouts.robometer_rollout_worker import RobometerRolloutWorker
 from robometer_policy_learning.rollouts.rollout_worker import RolloutWorker
 from robometer_policy_learning.rollouts.evaluation_worker import EvaluationWorker
@@ -35,6 +36,7 @@ ALG_TO_CONFIG = {
     "bc": BCConfig,
     "sac": SACConfig,
     "dp": DPConfig,
+    "flow": FlowMatchingConfig,
 }
 
 

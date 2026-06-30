@@ -20,6 +20,7 @@ from robometer_policy_learning.algorithms.bc import BC, BCConfig
 from robometer_policy_learning.algorithms.iql import IQL, IQLConfig
 from robometer_policy_learning.algorithms.sac import SAC, SACConfig
 from robometer_policy_learning.algorithms.dp import DP, DPConfig
+from robometer_policy_learning.algorithms.flow_matching import FlowMatching, FlowMatchingConfig
 from robometer_policy_learning.rollouts.evaluation_worker import EvaluationWorker
 from robometer_policy_learning.utils.training_utils import load_checkpoint, save_checkpoint, setup_training, create_buffer
 from robometer_policy_learning.utils.transitions_transforms import ImageAugmentationTransform
@@ -29,6 +30,7 @@ ALG_TO_CONFIG = {
     "bc": BCConfig,
     "sac": SACConfig,
     "dp": DPConfig,
+    "flow": FlowMatchingConfig,
 }
 
 
@@ -182,6 +184,18 @@ def main(cfg: DictConfig):
             logger=wandb_logger,
             lowdim_obs_stats=getattr(offline_buffer, "lowdim_obs_stats", {}),
         )
+
+        # Track the best eval success_rate and snapshot a "best" checkpoint whenever it improves.
+        best_success_rate = -1.0
+
+        def _maybe_save_best(metrics):
+            nonlocal best_success_rate
+            sr = metrics.get("success_rate") if metrics else None
+            if sr is not None and float(sr) > best_success_rate:
+                best_success_rate = float(sr)
+                save_checkpoint(offline_algo, save_dir, "best")
+                logger.info(f"New best eval success_rate={best_success_rate:.3f}; saved checkpoint to {save_dir}/best")
+
         if cfg.eval.eval_on_first_step:
             offline_eval_metrics = offline_evaluation_worker.run(offline_algo.actor)
             wandb_logger.log(offline_eval_metrics, step=offline_algo.step_counter, prefix="eval")
@@ -200,6 +214,7 @@ def main(cfg: DictConfig):
                 if (i + 1) % cfg.eval.eval_freq == 0 and cfg.eval.eval_freq is not None:
                     offline_eval_metrics = offline_evaluation_worker.run(offline_algo.actor)
                     wandb_logger.log(offline_eval_metrics, step=offline_algo.step_counter, prefix="eval")
+                    _maybe_save_best(offline_eval_metrics)
 
     # clean up
     env.close()

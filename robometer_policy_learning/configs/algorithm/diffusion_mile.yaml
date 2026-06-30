@@ -1,0 +1,50 @@
+# Diffusion MILE (MILE for DiffusionActor policies via the denoising-loss log-prob proxy).
+# Requires a DP-pretrained DiffusionActor (load_dir must point at a `dp` pretraining run).
+# Only the fields the algorithm reads are listed here; the DiffusionActor's network/scheduler
+# come from the loaded checkpoint, so DP net/scheduler hyperparameters are intentionally omitted.
+
+# Basic parameters
+learning_starts: 0
+batch_size: 64
+num_updates_per_train_step: 1
+
+# Optimizer
+actor_optimizer_lr: 1.0e-5
+actor_optimizer_eps: 1.0e-8
+actor_optimizer_weight_decay: 1.0e-6
+actor_optimizer_betas: [0.95, 0.999]
+clip_grad_norm: 1.0  # <= 0 disables gradient clipping
+
+# MILE-specific (probit intervention model)
+lambda_intervention: 1.0               # convex weight of the probit BCE loss
+intervention_cost: 0.0                 # probit threshold offset c
+probit_scale: 1.0                      # probit scale beta
+monte_carlo_samples: 10                # K samples for the marginal probit MC estimate
+condition_intervention_on_action: false  # use the observed human action a_h on intervention steps
+
+# Diffusion-MILE specific (denoising-score log-prob proxy)
+score_monte_carlo_samples: 1           # diffusion-noising samples used to estimate ell(a, s)
+reference_relative_score: true        # use loss_0 - loss_theta instead of -loss_theta (needs rollout policy)
+
+# Anchor regularizer (fine-tuning stability against the frozen rollout denoiser)
+anchor_loss_weight: 0.001                # 0 disables the anchor loss
+anchor_monte_carlo_samples: 1          # rollout-policy action samples for the anchor loss (>= 1)
+
+# Running-stats normalization of the probit score gap (decouples probit_scale/intervention_cost
+# from the absolute scale of the denoising score; standardizes the gap before the Gaussian CDF).
+normalize_score_gaps: false            # true => standardize the score gap by its EMA mean/std
+score_gap_ema_decay: 0.99              # EMA decay for the running gap mean/variance
+score_gap_norm_eps: 1.0e-6             # variance floor before sqrt
+score_gap_std_min: 0.1                 # lower bound on the normalization std
+score_gap_clip: 5.0                    # clip standardized gap to +/- this (<= 0 disables)
+
+# EMA of weights (used for inference/eval)
+use_ema: true
+ema_decay: 0.999
+
+# Regularization / anti-overfitting (parity with BC/DP)
+obs_noise_std: 0.0
+action_noise_std: 0.0
+
+# Diagnostics: if > 0, every N updates run the (expensive) reverse sampler and log action MSE.
+log_sample_metrics_every: 0

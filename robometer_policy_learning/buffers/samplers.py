@@ -175,8 +175,12 @@ class ChunkedSequentialSampler(BaseSampler):
         done_seq = torch.tensor(any(t.done for t in chunk))
         truncated_seq = torch.tensor(any(t.truncated for t in chunk))
 
+        # Base the collapsed transition on the first timestep so the inherited metadata 
+        # -- in particular ``info['intervention']`` -- matches the conditioning observation
+        # (``obs_seq = first.obs``). The chunk represents "predict the action sequence from state
+        # ``s_t``", so its intervention label should be the label at ``s_t`` (the first step).
         return dataclasses.replace(
-            chunk[-1],
+            first,
             obs=obs_seq,
             action=action_seq,
             reward=reward_seq,

@@ -1,19 +1,22 @@
-"""Diffusion Policy (DP) implementation.
+"""Flow Matching (FM) policy implementation.
 
-This module contains everything needed to train and deploy a Diffusion Policy
-(Chi et al., 2023, https://arxiv.org/abs/2303.04137) inside the robometer policy-learning
-framework:
+This module contains everything needed to train and deploy a Flow Matching policy
+(Lipman et al., 2023, https://arxiv.org/abs/2210.02747; Liu et al., 2022 "rectified flow",
+https://arxiv.org/abs/2209.03003) inside the robometer policy-learning framework:
 
-* the diffusers DDPM / DDIM noise schedulers (forward noising + reverse sampling),
-* three conditional noise-prediction networks (a 1D conditional U-Net, a conditional MLP,
-  and a conditional Transformer),
-* :class:`DiffusionActor`, a :class:`BaseActor` whose ``act()`` runs the reverse diffusion
-  process so it can be deployed/evaluated like any other actor,
-* :class:`DP`, the :class:`BaseAlgorithm` that trains the actor by denoising-score matching.
+* a conditional velocity-prediction network (the same 1D conditional U-Net, conditional MLP,
+  and conditional Transformer used by Diffusion Policy),
+* :class:`FlowMatchingActor`, a :class:`BaseActor` whose ``act()`` integrates the learned ODE
+  (Euler) from Gaussian noise to an action chunk so it can be deployed/evaluated like any
+  other actor,
+* :class:`FlowMatching`, the :class:`BaseAlgorithm` that trains the actor by conditional
+  flow matching (regressing the straight-line OT velocity).
 
-The policy works in the actor's normalized ([-1, 1]) action space. The replay buffer maps
-stored env-space actions into [-1, 1] (via ``min_action`` / ``max_action``); ``act()``
-unnormalizes back to the env action space.
+This is the deterministic flow-matching analogue of :class:`DP`. Instead of a multi-step
+diffusion noise schedule, training regresses a velocity field along the conditional OT path
+``x_t = (1 - (1 - sigma_min) t) x0 + t x1`` and sampling integrates ``dx/dt = v(x_t, t, obs)``
+from ``t=0`` to ``t=1``. The policy works in the actor's normalized ([-1, 1]) action space; the
+replay buffer maps stored env-space actions into [-1, 1] and ``act()`` unnormalizes back.
 """
 
 import copy
@@ -24,9 +27,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from diffusers import DDIMScheduler, DDPMScheduler
 
-from robometer_policy_learning.algorithms.dp.configuration_dp import DPConfig
+from robometer_policy_learning.algorithms.dp.modeling_dp import EMAModel
+from robometer_policy_learning.algorithms.flow_matching.configuration_flow import FlowMatchingConfig
 from robometer_policy_learning.algorithms.modeling_algorithm import BaseAlgorithm
 from robometer_policy_learning.modules.base import BaseActorConfig
 from robometer_policy_learning.modules.base.modeling_actor import BaseActor
@@ -35,49 +38,14 @@ from robometer_policy_learning.utils.featurizers import ObservationFeaturizer, _
 
 
 # =====================================================================================
-# Noise scheduler (diffusers)
-# =====================================================================================
-def make_noise_scheduler(
-    sampler: str,
-    num_train_timesteps: int,
-    beta_start: float,
-    beta_end: float,
-    beta_schedule: str,
-    prediction_type: str,
-    clip_sample: bool,
-    clip_sample_range: float,
-) -> Union[DDPMScheduler, DDIMScheduler]:
-    """Build a diffusers DDPM or DDIM scheduler.
-
-    The same instance is used for both training (``add_noise`` forward process) and
-    inference (``set_timesteps`` + ``step`` reverse process); the two scheduler types share
-    the diffusion constants and differ only in the reverse update.
-    """
-    kwargs = dict(
-        num_train_timesteps=num_train_timesteps,
-        beta_start=beta_start,
-        beta_end=beta_end,
-        beta_schedule=beta_schedule,
-        prediction_type=prediction_type,
-        clip_sample=clip_sample,
-        clip_sample_range=clip_sample_range,
-    )
-    if sampler == "ddpm":
-        return DDPMScheduler(**kwargs)
-    elif sampler == "ddim":
-        return DDIMScheduler(**kwargs)
-    raise ValueError(f"Unknown sampler: {sampler!r} (expected 'ddpm' or 'ddim')")
-
-
-# =====================================================================================
-# Diffusion actor (deployable BaseActor)
+# Flow matching actor (deployable BaseActor)
 # =====================================================================================
 @dataclass
-class DiffusionActorConfig(BaseActorConfig):
-    """Config for :class:`DiffusionActor`.
+class FlowMatchingActorConfig(BaseActorConfig):
+    """Config for :class:`FlowMatchingActor`.
 
     Carries the standard actor fields (obs/action space, normalization, featurizer/image
-    encoder settings) plus the diffusion-specific hyperparameters from :class:`DPConfig`.
+    encoder settings) plus the flow-matching hyperparameters from :class:`FlowMatchingConfig`.
     """
 
     # Featurizer / image-encoder settings (copied from the source actor config)
@@ -99,15 +67,11 @@ class DiffusionActorConfig(BaseActorConfig):
     impala_use_smaller: bool = False
     impala_output_dim: Optional[int] = None
 
-    # Diffusion hyperparameters
+    # Flow matching hyperparameters
     horizon: int = 1
-    num_train_timesteps: int = 100
-    num_inference_steps: int = 100
-    beta_schedule: str = "squaredcos_cap_v2"
-    beta_start: float = 1e-4
-    beta_end: float = 0.02
-    prediction_type: str = "epsilon"
-    sampler: str = "ddpm"
+    num_inference_steps: int = 10
+    sigma_min: float = 0.0
+    time_embed_scale: float = 1000.0
     clip_sample: bool = True
     clip_sample_range: float = 1.0
 
@@ -127,25 +91,25 @@ class DiffusionActorConfig(BaseActorConfig):
 
     @property
     def actor_class(self):
-        return DiffusionActor
+        return FlowMatchingActor
 
 
-class DiffusionActor(BaseActor):
-    """Actor whose ``act()`` produces actions via reverse diffusion conditioned on the obs.
+class FlowMatchingActor(BaseActor):
+    """Actor whose ``act()`` produces actions by integrating a learned velocity field.
 
     Trainable parameters: an observation encoder (featurizer + MLP producing the global
-    conditioning vector) and a noise-prediction network (U-Net, MLP, or Transformer). The DP algorithm
-    drives training through :meth:`encode_obs` / :meth:`predict_noise`; deployment uses
-    :meth:`_act` (called by :meth:`BaseActor.act`).
+    conditioning vector) and a velocity-prediction network (U-Net, MLP, or Transformer). The FM
+    algorithm drives training through :meth:`encode_obs` / :meth:`predict_velocity`; deployment
+    uses :meth:`_act` (called by :meth:`BaseActor.act`).
     """
 
-    def __init__(self, config: DiffusionActorConfig):
+    def __init__(self, config: FlowMatchingActorConfig):
         super().__init__(config)
         self.config = config
         self.preprocess_obs_transform = config.preprocess_obs_transform
 
         if not self.is_continuous:
-            raise ValueError("DiffusionActor only supports continuous (Box) action spaces")
+            raise ValueError("FlowMatchingActor only supports continuous (Box) action spaces")
 
         self.action_dim = int(np.prod(config.action_space.shape))
         self.horizon = int(config.horizon)
@@ -173,7 +137,7 @@ class DiffusionActor(BaseActor):
         )
         obs_dim = int(self.obs_featurizer.output_dim)
         if obs_dim <= 0:
-            raise ValueError("ObservationFeaturizer produced invalid output dimension for DiffusionActor.")
+            raise ValueError("ObservationFeaturizer produced invalid output dimension for FlowMatchingActor.")
 
         if config.obs_encoder_hidden_dims:
             self.obs_encoder = nn.Sequential(
@@ -190,7 +154,7 @@ class DiffusionActor(BaseActor):
             self.obs_encoder = nn.Identity()
             self.global_cond_dim = obs_dim
 
-        # --- Noise prediction network ---
+        # --- Velocity prediction network (shared architectures with Diffusion Policy) ---
         if config.net_type == "unet":
             self.net = ConditionalUnet1D(
                 action_dim=self.action_dim,
@@ -224,23 +188,13 @@ class DiffusionActor(BaseActor):
         else:
             raise ValueError(f"Unknown net_type: {config.net_type!r} (expected 'unet', 'mlp', or 'transformer')")
 
-        # --- Noise scheduler (diffusers) ---
-        # Stored as a plain attribute (not a submodule); diffusers handles device placement
-        # internally via ``add_noise`` and ``set_timesteps(device=...)``.
-        self.scheduler = make_noise_scheduler(
-            sampler=config.sampler,
-            num_train_timesteps=config.num_train_timesteps,
-            beta_start=config.beta_start,
-            beta_end=config.beta_end,
-            beta_schedule=config.beta_schedule,
-            prediction_type=config.prediction_type,
-            clip_sample=config.clip_sample,
-            clip_sample_range=config.clip_sample_range,
-        )
         self.num_inference_steps = int(config.num_inference_steps)
-        self.sampler = config.sampler
+        self.sigma_min = float(config.sigma_min)
+        self.time_embed_scale = float(config.time_embed_scale)
+        self.clip_sample = bool(config.clip_sample)
+        self.clip_sample_range = float(config.clip_sample_range)
 
-        # DiffusionActor has no Gaussian action distribution; act()/training use diffusion.
+        # FlowMatchingActor has no Gaussian action distribution; act()/training use the flow ODE.
         self.action_dist = None
 
     # ------------------------------------------------------------------ helpers
@@ -253,39 +207,46 @@ class DiffusionActor(BaseActor):
         obs_flat = self.obs_featurizer.flatten_obs(obs, device=device)
         return self.obs_encoder(obs_flat.float())
 
-    def predict_noise(
-        self, noisy_actions: torch.Tensor, timesteps: torch.Tensor, global_cond: torch.Tensor
+    def predict_velocity(
+        self, x_t: torch.Tensor, t: torch.Tensor, global_cond: torch.Tensor
     ) -> torch.Tensor:
-        """Network forward: predict the noise (or x0) added to ``noisy_actions``."""
-        return self.net(noisy_actions, timesteps, global_cond)
+        """Network forward: predict the flow velocity ``v(x_t, t, obs)`` of the same shape as ``x_t``.
+
+        ``t`` is the continuous flow time in [0, 1]; it is rescaled by ``time_embed_scale`` before
+        the network's sinusoidal time embedding (which was designed for integer diffusion steps).
+        """
+        return self.net(x_t, t * self.time_embed_scale, global_cond)
+
+    def _maybe_clip(self, x: torch.Tensor) -> torch.Tensor:
+        if self.clip_sample:
+            return x.clamp(-self.clip_sample_range, self.clip_sample_range)
+        return x
 
     @torch.no_grad()
     def sample_actions(self, obs: Union[dict, torch.Tensor]) -> torch.Tensor:
-        """Run the reverse diffusion process. Returns ``(B, horizon, action_dim)`` in [-1, 1]."""
+        """Integrate the learned ODE with Euler steps. Returns ``(B, horizon, action_dim)`` in [-1, 1]."""
         global_cond = self.encode_obs(obs)
         batch_size = global_cond.shape[0]
         device = global_cond.device
 
         x = torch.randn(batch_size, self.horizon, self.action_dim, device=device)
-        self.scheduler.set_timesteps(self.num_inference_steps, device=device)
-
-        for t in self.scheduler.timesteps:
-            # Per-sample timestep tensor for the network's sinusoidal embedding.
-            t_batch = t.to(device=device, dtype=torch.long).expand(batch_size)
-            model_output = self.net(x, t_batch, global_cond)
-            x = self.scheduler.step(model_output, t, x).prev_sample
-        return x.clamp(-1.0, 1.0)
+        dt = 1.0 / self.num_inference_steps
+        for i in range(self.num_inference_steps):
+            t = i * dt
+            t_batch = torch.full((batch_size,), t, device=device, dtype=torch.float32)
+            v = self.predict_velocity(x, t_batch, global_cond)
+            x = x + dt * v
+        return self._maybe_clip(x)
 
     @torch.no_grad()
     def sample_actions_batch(self, obs: Union[dict, torch.Tensor], num_samples: int) -> torch.Tensor:
         """Sample ``num_samples`` independent action chunks per observation in ONE batched pass.
 
-        Encodes the obs once, tiles the conditioning ``num_samples`` times, and runs a single
-        reverse-diffusion loop over a ``(num_samples * B)`` batch (each row gets its own initial
-        noise), so the Monte Carlo samples are produced in parallel on the GPU rather than via a
-        Python loop of ``sample_actions`` calls. Equivalent in distribution to ``num_samples``
-        independent ``sample_actions`` calls (same per-sample net + scheduler stochasticity); only
-        the obs encoding is shared (deterministic given obs), not re-drawn per sample.
+        Encodes the obs once, tiles the conditioning ``num_samples`` times, and runs a single Euler
+        integration over a ``(num_samples * B)`` batch (each row gets its own initial noise), so the
+        Monte Carlo samples are produced in parallel on the GPU rather than via a Python loop of
+        ``sample_actions`` calls. Equivalent in distribution to ``num_samples`` independent
+        ``sample_actions`` calls; only the obs encoding is shared (deterministic given obs).
 
         Returns ``(num_samples, B, horizon, action_dim)`` in [-1, 1].
         """
@@ -303,29 +264,28 @@ class DiffusionActor(BaseActor):
         # initial noise, making the K chunks per obs independent draws.
         cond_rep = global_cond.repeat(num_samples, 1)  # (K*B, global_cond_dim)
         x = torch.randn(kb, self.horizon, self.action_dim, device=device)
-        self.scheduler.set_timesteps(self.num_inference_steps, device=device)
-
-        for t in self.scheduler.timesteps:
-            # Per-sample timestep tensor for the network's sinusoidal embedding.
-            t_batch = t.to(device=device, dtype=torch.long).expand(kb)
-            model_output = self.net(x, t_batch, cond_rep)
-            x = self.scheduler.step(model_output, t, x).prev_sample
-        x = x.clamp(-1.0, 1.0)
+        dt = 1.0 / self.num_inference_steps
+        for i in range(self.num_inference_steps):
+            t = i * dt
+            t_batch = torch.full((kb,), t, device=device, dtype=torch.float32)
+            v = self.predict_velocity(x, t_batch, cond_rep)
+            x = x + dt * v
+        x = self._maybe_clip(x)
         return x.view(num_samples, batch_size, self.horizon, self.action_dim)
 
     # ------------------------------------------------------------------ BaseActor API
     def _act(
         self, obs: Union[dict, torch.Tensor], deterministic: bool = False, actor_state: Any = None
     ) -> Tuple[torch.Tensor, Any]:
-        # Diffusion sampling is inherently stochastic; ``deterministic`` is accepted for API
-        # compatibility (a fixed seed could be added here if exact reproducibility is needed).
+        # Flow-matching sampling starts from random noise so it is stochastic; ``deterministic`` is
+        # accepted for API compatibility (a fixed seed could be added here for reproducibility).
         actions = self.sample_actions(obs)
         if self.horizon == 1:
             actions = actions.squeeze(1)  # (B, action_dim) for non-chunked deployment
         return actions, None
 
     def get_action_dist_params(self, obs, hidden=None):
-        raise NotImplementedError("DiffusionActor does not expose an explicit action distribution.")
+        raise NotImplementedError("FlowMatchingActor does not expose an explicit action distribution.")
 
     def save(self, path: str):
         torch.save(self.state_dict(), path)
@@ -335,49 +295,28 @@ class DiffusionActor(BaseActor):
 
 
 # =====================================================================================
-# Exponential moving average of weights
+# Flow Matching algorithm
 # =====================================================================================
-class EMAModel:
-    """Maintains an exponential moving average of another module's parameters/buffers."""
+class FlowMatching(BaseAlgorithm):
+    """Flow Matching: behavior cloning via conditional flow matching (OT / rectified flow).
 
-    def __init__(self, averaged_model: nn.Module, decay: float = 0.995):
-        self.decay = decay
-        self.averaged_model = averaged_model
-
-    @torch.no_grad()
-    def step(self, new_model: nn.Module):
-        for avg_p, new_p in zip(self.averaged_model.parameters(), new_model.parameters()):
-            if avg_p.dtype.is_floating_point:
-                avg_p.mul_(self.decay).add_(new_p.detach(), alpha=1.0 - self.decay)
-            else:
-                avg_p.copy_(new_p.detach())
-        for avg_b, new_b in zip(self.averaged_model.buffers(), new_model.buffers()):
-            avg_b.copy_(new_b)
-
-
-# =====================================================================================
-# Diffusion Policy algorithm
-# =====================================================================================
-class DP(BaseAlgorithm):
-    """Diffusion Policy: behavior cloning via conditional denoising-score matching.
-
-    ``config.actor`` must be a :class:`DiffusionActor` (built by
-    ``training_utils.build_actor_critic_models`` like every other actor); it holds all
-    trainable parameters. The (EMA) diffusion actor is exposed as ``self.actor`` so it can be
-    evaluated and checkpointed like any other policy.
+    ``config.actor`` must be a :class:`FlowMatchingActor` (built by
+    ``training_utils.build_actor_critic_models`` like every other actor); it holds all trainable
+    parameters. The (EMA) actor is exposed as ``self.actor`` so it can be evaluated and
+    checkpointed like any other policy.
     """
 
-    def __init__(self, config: DPConfig):
+    def __init__(self, config: FlowMatchingConfig):
         super().__init__(config)
         self.config = config
 
         online_actor = config.actor
         if online_actor is None:
-            raise ValueError("A DiffusionActor is required for DP (built by build_actor_critic_models)")
-        if not isinstance(online_actor, DiffusionActor):
+            raise ValueError("A FlowMatchingActor is required for FlowMatching (built by build_actor_critic_models)")
+        if not isinstance(online_actor, FlowMatchingActor):
             raise TypeError(
-                f"DP requires a DiffusionActor, got {type(online_actor).__name__}. "
-                "It is built in training_utils.build_actor_critic_models when offline_alg_name == 'dp'."
+                f"FlowMatching requires a FlowMatchingActor, got {type(online_actor).__name__}. "
+                "It is built in training_utils.build_actor_critic_models when offline_alg_name == 'flow'."
             )
 
         self.device = next(online_actor.parameters()).device
@@ -403,8 +342,11 @@ class DP(BaseAlgorithm):
         self.buffer = config.buffer
         self.batch_size = config.batch_size
         self.learning_starts = config.learning_starts
-        self.prediction_type = self.online_actor.scheduler.config.prediction_type
-        self.use_weighted_dp = bool(getattr(config, "use_weighted_dp", False))
+        self.sigma_min = self.online_actor.sigma_min
+        self.time_sampling = config.time_sampling
+        self.logit_normal_mean = config.logit_normal_mean
+        self.logit_normal_std = config.logit_normal_std
+        self.use_weighted_fm = bool(getattr(config, "use_weighted_fm", False))
 
         self.actor_optimizer = torch.optim.AdamW(
             self.online_actor.parameters(),
@@ -414,11 +356,13 @@ class DP(BaseAlgorithm):
             weight_decay=config.actor_optimizer_weight_decay,
         )
 
-        print(f"DP: net_type={config.net_type}, horizon={self.horizon}, action_dim={self.online_actor.action_dim}")
         print(
-            f"DP: num_train_timesteps={config.num_train_timesteps}, "
-            f"num_inference_steps={config.num_inference_steps}, prediction_type={self.prediction_type}, "
-            f"sampler={config.sampler}, use_ema={self.use_ema}, use_weighted_dp={self.use_weighted_dp}"
+            f"FlowMatching: net_type={config.net_type}, horizon={self.horizon}, "
+            f"action_dim={self.online_actor.action_dim}"
+        )
+        print(
+            f"FlowMatching: num_inference_steps={config.num_inference_steps}, sigma_min={self.sigma_min}, "
+            f"time_sampling={self.time_sampling}, use_ema={self.use_ema}, use_weighted_fm={self.use_weighted_fm}"
         )
 
     def _prepare_actions(self, actions: torch.Tensor) -> torch.Tensor:
@@ -426,15 +370,24 @@ class DP(BaseAlgorithm):
         if actions.dim() == 2:  # (B, action_dim) -> single-step chunk
             actions = actions.unsqueeze(1)
         elif actions.dim() != 3:
-            raise ValueError(f"Unexpected action shape for DP: {tuple(actions.shape)}")
+            raise ValueError(f"Unexpected action shape for FlowMatching: {tuple(actions.shape)}")
         return actions
 
-    def train_step(self, logging_prefix: str = "dp", rollout_step: int = None) -> dict:
+    def _sample_time(self, batch_size: int) -> torch.Tensor:
+        """Draw the flow time ``t`` in (0, 1) for each sample, per ``time_sampling``."""
+        if self.time_sampling == "uniform":
+            return torch.rand(batch_size, device=self.device)
+        elif self.time_sampling == "logit_normal":
+            s = torch.randn(batch_size, device=self.device) * self.logit_normal_std + self.logit_normal_mean
+            return torch.sigmoid(s)
+        raise ValueError(f"Unknown time_sampling: {self.time_sampling!r} (expected 'uniform' or 'logit_normal')")
+
+    def train_step(self, logging_prefix: str = "flow", rollout_step: int = None) -> dict:
         if rollout_step is not None and rollout_step < self.learning_starts:
             return {}
 
         losses = []
-        noise_pred_means = []
+        velocity_pred_means = []
         expert_action_means = []
         sample_mse_errors = []
         unnormalized_sample_mse_errors = []
@@ -455,7 +408,7 @@ class DP(BaseAlgorithm):
 
             expert_actions = self._prepare_actions(expert_actions).float()
 
-            # Optional data augmentation (parity with BC).
+            # Optional data augmentation (parity with BC / DP).
             if self.config.obs_noise_std > 0:
                 if isinstance(obs, dict):
                     obs = {k: v + torch.randn_like(v) * self.config.obs_noise_std for k, v in obs.items()}
@@ -466,20 +419,20 @@ class DP(BaseAlgorithm):
 
             batch_size = expert_actions.shape[0]
 
-            # Forward diffusion: corrupt the expert action chunk.
-            noise = torch.randn_like(expert_actions)
-            timesteps = torch.randint(
-                0, self.online_actor.scheduler.config.num_train_timesteps, (batch_size,), device=self.device
-            ).long()
-            noisy_actions = self.online_actor.scheduler.add_noise(expert_actions, noise, timesteps)
+            # Conditional flow matching: sample noise x0, flow time t, form the OT interpolant x_t,
+            # and regress the (constant) target velocity u = x1 - (1 - sigma_min) * x0.
+            x0 = torch.randn_like(expert_actions)
+            x1 = expert_actions
+            t = self._sample_time(batch_size)
+            t_expand = t.view(batch_size, *([1] * (x1.dim() - 1)))
+            x_t = (1.0 - (1.0 - self.sigma_min) * t_expand) * x0 + t_expand * x1
+            target = x1 - (1.0 - self.sigma_min) * x0
 
-            # Predict noise (or x0) and regress against the target.
             global_cond = self.online_actor.encode_obs(obs)
-            model_pred = self.online_actor.predict_noise(noisy_actions, timesteps, global_cond)
-            target = noise if self.prediction_type == "epsilon" else expert_actions
+            v_pred = self.online_actor.predict_velocity(x_t, t, global_cond)
 
-            if self.use_weighted_dp:
-                per_sample = (model_pred - target).pow(2).reshape(batch_size, -1).mean(dim=1)
+            if self.use_weighted_fm:
+                per_sample = (v_pred - target).pow(2).reshape(batch_size, -1).mean(dim=1)
                 w = batch.get("weight") if isinstance(batch, dict) else None
                 if w is None:
                     w = torch.ones_like(per_sample)
@@ -487,7 +440,7 @@ class DP(BaseAlgorithm):
                     w = torch.as_tensor(w, dtype=per_sample.dtype, device=per_sample.device).view(-1)
                 loss = (w * per_sample).sum() / (w.sum() + 1e-8)
             else:
-                loss = F.mse_loss(model_pred, target)
+                loss = F.mse_loss(v_pred, target)
 
             self.actor_optimizer.zero_grad()
             loss.backward()
@@ -499,7 +452,7 @@ class DP(BaseAlgorithm):
                 self.ema.step(self.online_actor)
 
             losses.append(loss.item())
-            noise_pred_means.append(model_pred.mean().item())
+            velocity_pred_means.append(v_pred.mean().item())
             expert_action_means.append(expert_actions.mean().item())
 
             # Optional (expensive) end-to-end sampling diagnostic.
@@ -523,7 +476,7 @@ class DP(BaseAlgorithm):
 
         metrics_dict = {
             "actor_loss": float(np.mean(losses)),
-            "noise_pred_mean": float(np.mean(noise_pred_means)),
+            "velocity_pred_mean": float(np.mean(velocity_pred_means)),
             "expert_action_mean": float(np.mean(expert_action_means)),
         }
         if sample_mse_errors:
@@ -537,7 +490,7 @@ class DP(BaseAlgorithm):
 
     @torch.no_grad()
     def evaluate_policy(self, eval_buffer, num_eval_batches: int = 10) -> dict:
-        """Denoising-loss + one-shot sampling MSE on a held-out buffer (overfitting check)."""
+        """Flow-matching loss + one-shot sampling MSE on a held-out buffer (overfitting check)."""
         self.online_actor.eval()
         eval_losses = []
         eval_sample_mse = []
@@ -549,15 +502,15 @@ class DP(BaseAlgorithm):
             expert_actions = self._prepare_actions(batch["action"]).float()
             batch_size = expert_actions.shape[0]
 
-            noise = torch.randn_like(expert_actions)
-            timesteps = torch.randint(
-                0, self.online_actor.scheduler.config.num_train_timesteps, (batch_size,), device=self.device
-            ).long()
-            noisy_actions = self.online_actor.scheduler.add_noise(expert_actions, noise, timesteps)
+            x0 = torch.randn_like(expert_actions)
+            x1 = expert_actions
+            t = self._sample_time(batch_size)
+            t_expand = t.view(batch_size, *([1] * (x1.dim() - 1)))
+            x_t = (1.0 - (1.0 - self.sigma_min) * t_expand) * x0 + t_expand * x1
+            target = x1 - (1.0 - self.sigma_min) * x0
             global_cond = self.online_actor.encode_obs(obs)
-            model_pred = self.online_actor.predict_noise(noisy_actions, timesteps, global_cond)
-            target = noise if self.prediction_type == "epsilon" else expert_actions
-            eval_losses.append(F.mse_loss(model_pred, target).item())
+            v_pred = self.online_actor.predict_velocity(x_t, t, global_cond)
+            eval_losses.append(F.mse_loss(v_pred, target).item())
 
             sampled = self.actor.sample_actions(obs)
             if sampled.shape != expert_actions.shape:

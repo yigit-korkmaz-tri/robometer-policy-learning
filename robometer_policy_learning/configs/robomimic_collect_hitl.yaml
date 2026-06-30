@@ -1,0 +1,60 @@
+# HITL rollout COLLECTION config for scripts/collect_hitl_rollout.py.
+#
+# Collects human-in-the-loop rollouts with a data-collection policy (load_dir) driven by a teleop
+# or simulated human, then writes them as a robomimic-style HDF5 dataset (loadable by
+# H5ReplayBuffer). The env / training / model / policy config is read at runtime from the
+# pretraining run's saved Hydra config (load_dir/.hydra/config.yaml) so it matches the loaded policy.
+#
+# Run with:  uv run python scripts/collect_hitl_rollout.py --config-name robomimic_collect_hitl \
+#                load_dir=/path/to/dp_run hitl.expert_load_dir=/path/to/expert_run
+defaults:
+  - _self_
+
+debug: false
+
+# Data-collection (rollout) policy: a pretraining run OUTPUT DIRECTORY containing
+# `.hydra/config.yaml` (env/training/model/policy read from there) and `checkpoints/<step>/actor.pt`.
+# `checkpoint` selects which <step> (null = latest available).
+load_dir: /home/yigitkorkmaz/robometer-policy-learning/outputs/2026-06-11/16-17-39
+checkpoint: 20000
+
+hitl:
+  seed: 0
+  online_buffer_capacity: 500000
+  store_only_human: false         # false = store all steps; true = store only human corrections
+
+  # ----- output -----
+  collect_num_rollouts: 5        # number of KEPT rollouts to collect
+  # true => keep only successful rollouts with >= 1 human intervention; false => keep all successful
+  # rollouts (intervention-free ones included). Counts toward collect_num_rollouts only when kept.
+  keep_only_hitl_rollouts: true
+  collect_output_path: hitl_rollouts_30_demos.hdf5       # output .hdf5 path; null => <hydra_output_dir>/hitl_rollouts.hdf5
+
+  # ----- intervention source -----
+  human_mode: real           # real (teleop) | simulated (expert policy + criterion)
+  expert_load_dir: /home/yigitkorkmaz/robometer-policy-learning/outputs/2026-06-11/16-17-39           # [simulated] pretraining run dir (or checkpoint dir) for the expert policy
+  expert_checkpoint: 50000         # [simulated] which checkpoint <step> for the expert (null = latest)
+  # [simulated] criterion: mile | mile_window (Gaussian log-prob) | diffusion_mile |
+  # diffusion_mile_paired | diffusion_mile_window (DiffusionActor denoising-score).
+  intervention_criteria: diffusion_mile_paired
+  criteria_intervention_hold: 10  # steps the expert stays in control after a trigger (1 = per-step)
+  # [open-loop hold] actions to take from each sampled expert chunk before resampling (<= chunk
+  # horizon). null => execute the whole chunk before resampling; 1 => resample every step (closed-loop).
+  sim_execution_horizon: null
+  criteria_window: 10             # [*_window] EMA window over the per-step expert-vs-robot score gap
+  criteria_intervention_cost: 0.0 # [all] probit threshold offset c
+  criteria_num_samples: 8         # [diffusion_mile] action samples for the probit MC estimate
+  criteria_score_mc_samples: 1    # [diffusion_mile*] diffusion-noising samples used to estimate ell(a,s)
+  criteria_probit_scale: 1.0      # [diffusion_mile*] probit scale beta on the score gap
+
+# Teleop (keyboard or 3D SpaceMouse) + rendering (only used when hitl.human_mode=real)
+teleop:
+  device: "spacemouse"            # keyboard | spacemouse
+  takeover_key: "tab"
+  camera: "agentview"
+  wrist_camera: "robot0_eye_in_hand"
+  show_wrist: true
+  enable_render: true             # set false for headless real-teleop runs (simulated forces False)
+
+logging:
+  log_level: "INFO"

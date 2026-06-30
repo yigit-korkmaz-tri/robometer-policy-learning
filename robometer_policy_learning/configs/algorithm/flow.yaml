@@ -1,4 +1,4 @@
-# Basic DP parameters
+# Basic Flow Matching parameters
 learning_starts: 0
 batch_size: 256
 num_updates_per_train_step: 1
@@ -10,18 +10,17 @@ actor_optimizer_weight_decay: 1.0e-6
 actor_optimizer_betas: [0.95, 0.999]
 clip_grad_norm: 1.0  # <= 0 disables gradient clipping
 
-# Diffusion / noise scheduler
-num_train_timesteps: 100
-num_inference_steps: 20  # <= num_train_timesteps; fewer => faster sampling
-beta_schedule: "squaredcos_cap_v2"  # ["linear", "squaredcos_cap_v2"]
-beta_start: 1.0e-4
-beta_end: 0.02
-prediction_type: "epsilon"  # ["epsilon", "sample"]
-sampler: "ddim"  # ["ddpm", "ddim"]
-clip_sample: true  # clamp predicted x0 to [-clip_sample_range, clip_sample_range]
+# Flow matching path / Euler ODE solver
+num_inference_steps: 10  # Euler integration steps for sampling (t: 0 -> 1); FM needs far fewer than diffusion
+sigma_min: 0.0  # OT-CFM path width at t=0; 0.0 => pure rectified flow (target velocity = x1 - x0)
+time_sampling: "uniform"  # ["uniform", "logit_normal"]
+logit_normal_mean: 0.0
+logit_normal_std: 1.0
+time_embed_scale: 1000.0  # continuous t in [0,1] scaled by this before the sinusoidal time embedding
+clip_sample: true  # clamp the integrated sample to [-clip_sample_range, clip_sample_range]
 clip_sample_range: 1.0
 
-# Noise prediction network
+# Velocity prediction network (same architectures as Diffusion Policy)
 net_type: "transformer"  # ["unet", "mlp", "transformer"]
 diffusion_step_embed_dim: 128
 unet_down_dims: [128, 256]  # downsampling factor is 2**(len(down_dims)-1)
@@ -45,16 +44,15 @@ obs_encoder_hidden_dims: []
 use_ema: true
 ema_decay: 0.995
 
-# Anti-overfitting regularization parameters (parity with BC)
+# Anti-overfitting regularization parameters (parity with BC / DP)
 obs_noise_std: 0.0
 action_noise_std: 0.0
 
-# Weighted cloning for HITL SIRIUS / IWR (parity with BC.use_weighted_bc). When true, the per-sample
-# denoising loss is weighted by batch["weight"] (set by the HITL reweighting helpers). Leave false for
-# offline pretraining and for HG-DAgger (which relies on storing only human steps, not weighting).
-use_weighted_dp: false
+# Weighted cloning for HITL SIRIUS / IWR (parity with DP.use_weighted_dp). When true, the per-sample
+# flow-matching loss is weighted by batch["weight"] (set by the HITL reweighting helpers).
+use_weighted_fm: false
 
 # Diagnostics
-# If > 0, every N updates run the (expensive) reverse diffusion sampler on the training batch
-# and log the resulting action MSE against the expert actions. 0 disables it.
+# If > 0, every N updates run the (expensive) Euler ODE sampler on the training batch and log the
+# resulting action MSE against the expert actions. 0 disables it.
 log_sample_metrics_every: 0

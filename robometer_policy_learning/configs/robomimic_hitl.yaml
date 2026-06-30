@@ -1,0 +1,108 @@
+# Human-in-the-loop training config.
+#
+# This config ONLY carries HITL-specific settings: the HITL training algorithm, debug, the
+# pretrained policy to start from (load_dir / checkpoint), and the hitl / teleop / logging / eval
+# sections. The env / training / model / policy config is read at runtime from the pretraining run's
+# saved Hydra config (load_dir/.hydra/config.yaml) so it always matches the loaded model.
+defaults:
+  - algorithm@offline_algorithm: diffusion_mile   # HITL training-algorithm hyperparameters.
+                                         #   HG-DAgger:        bc
+                                         #   diffusion MILE:   diffusion_mile (needs a DP-pretrained DiffusionActor)
+  - _self_
+
+debug: false
+
+# Pretrained policy to start from. load_dir is a pretraining run OUTPUT DIRECTORY containing
+# `.hydra/config.yaml` (env/training/model/policy are read from there) and
+# `checkpoints/<step>/actor.pt`. `checkpoint` selects which <step> (null = latest available).
+load_dir: /home/yigitkorkmaz/robometer-policy-learning/outputs/2026-06-11/16-17-39
+checkpoint: 20000
+
+# HITL training algorithm selector (mile | bc | diffusion_mile). Must match the
+# algorithm@offline_algorithm default above. bc + hitl.store_only_human=true => HG-DAgger.
+alg:
+  offline_alg_name: diffusion_mile
+
+# Iterative human-in-the-loop loop
+#   MILE:            alg.offline_alg_name=mile             hitl.store_only_human=false  (store all transitions)
+#   Diffusion MILE: alg.offline_alg_name=diffusion_mile  hitl.store_only_human=false  (DiffusionActor; store all)
+#   HG-DAgger:       alg.offline_alg_name=bc               hitl.store_only_human=true   (store only corrections)
+hitl:
+  seed: 0
+  keep_best: false
+  # Train on a precollected HITL dataset (HDF5 written by scripts/collect_hitl_rollout.py) instead
+  # of collecting interventions online. When set, requires num_iterations=1 and skips online
+  # collection (env/expert/criterion/worker) entirely. null => collect online.
+  precollected_hitl_dataset: null
+  num_iterations: 10              # must be 1 when precollected_hitl_dataset is set
+  rollouts_per_iter: 5            # intervention rollouts collected each iteration (online mode only)
+  train_epochs_per_iter: 2        # passes over the training buffer each iteration; the per-iteration
+                                  # train_step count is ceil(buffer_size / batch_size) * this, so it
+                                  # scales as the (online + offline) dataset grows.
+  online_buffer_capacity: 500000
+  clear_buffer_each_iter: false   # false = accumulate online data across iterations
+  save_interval: 1                # save a checkpoint every N HITL iterations
+  store_only_human: false         # false = store all steps (MILE); true = store only corrections (HG-DAgger)
+  # [MILE] split each trajectory into contiguous same-label segments (separate episodes) so chunked
+  # sampling yields label-homogeneous chunks (no trailing-policy dilution) while keeping both classes.
+  # Segments shorter than chunk_size are dropped. Applies to precollected load + online collection.
+  segment_by_intervention: false
+  # [online collection] true => keep only successful rollouts with >= 1 human intervention; false =>
+  # keep all successful rollouts. Counts toward rollouts_per_iter only when kept.
+  keep_only_hitl_rollouts: true
+  # Offline-demo source mixed in for anti-forgetting aggregation (labelled intervention=2):
+  #   null         => no offline data (online buffer only)
+  #   pretraining  => mix the pretraining demonstration H5 (env.h5_dataset_path)
+  #   warmup       => mix a user-provided demo H5 (hitl.warmup_dataset_path). Same mechanism as
+  #                   pretraining but from an arbitrary path, so different algorithms / sweep configs
+  #                   reuse the SAME fixed set of initial demos.
+  offline_mode: null
+  # [warmup] HITL/demo H5 (e.g. written by scripts/collect_hitl_rollout.py) to load offline demos
+  # from. Every step is relabelled as an offline demo (intervention=2).
+  warmup_dataset_path: null
+  offline_sample_ratio: 0.5       # fraction of each batch from the offline buffer; null = live size ratio
+  # Intervention source.
+  human_mode: simulated                # real (teleop) | simulated (expert policy + criterion)
+  expert_load_dir: /home/yigitkorkmaz/robometer-policy-learning/outputs/2026-06-11/16-17-39           # [simulated] pretraining run dir (or checkpoint dir) for the expert policy
+  expert_checkpoint: 50000         # [simulated] which checkpoint <step> for the expert (null = latest)
+  # [simulated] criterion: mile | mile_window (Gaussian log-prob) | diffusion_mile |
+  # diffusion_mile_paired | diffusion_mile_window (DiffusionActor denoising-score).
+  intervention_criteria: diffusion_mile_paired
+  criteria_intervention_hold: 10   # [simulated] steps the expert stays in control after a trigger (1 = per-step)
+  # [simulated] during a hold the expert executes its sampled chunk OPEN-LOOP (receding-horizon):
+  # number of actions to take from each sampled expert chunk before resampling a fresh chunk (must
+  # be <= chunk horizon). null => execute the whole chunk before resampling (a hold longer than the
+  # chunk resamples at the chunk end); 1 => resample every step (closed-loop, most reactive).
+  sim_execution_horizon: null
+  criteria_window: 10             # [*_window] EMA window over the per-step expert-vs-robot score (log-prob) gap
+  criteria_intervention_cost: 0.0 # [all] probit threshold offset c
+  # The following are mainly for the diffusion_mile* criteria (ignored by the Gaussian mile* ones).
+  # Left null so each criterion keeps its own default (mile num_samples=50, diffusion_mile=8).
+  criteria_num_samples: 8      # [diffusion_mile] action samples for the probit MC estimate (each = 1 reverse-diffusion)
+  criteria_score_mc_samples: 1 # [diffusion_mile*] diffusion-noising samples used to estimate ell(a,s)
+  criteria_probit_scale: 1.0     # [diffusion_mile*] probit scale beta on the score gap
+  # Dataset-level reweighting for weighted BC (requires alg.offline_alg_name=bc + use_weighted_bc=true).
+  reweighting: null               # null | sirius | iwr
+
+# Teleop (keyboard or 3D SpaceMouse) + rendering
+teleop:
+  device: "spacemouse"              # keyboard | spacemouse
+  takeover_key: "tab"
+  camera: "agentview"
+  wrist_camera: "robot0_eye_in_hand"
+  show_wrist: true
+  enable_render: true             # set false for headless simulated-human runs (no cv2 window)
+
+logging:
+  wandb_project: mile_dp
+  wandb_entity: tri
+  wandb_offline: false
+  wandb_log_dir_base: logs/wandb
+  wandb_name: "train_hitl"
+  log_level: "INFO"
+
+eval:
+  eval_freq: 1     # Evaluation frequency in epochs
+  eval_num_episodes: 50  # Number of episodes for evaluation
+  eval_record_video: true  # Whether to record videos during evaluation
+  eval_on_first_step: true  # If true, evaluate on the first step before any training
