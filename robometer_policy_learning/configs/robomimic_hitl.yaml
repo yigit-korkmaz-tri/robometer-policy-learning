@@ -56,15 +56,18 @@ hitl:
   #   warmup       => mix a user-provided demo H5 (hitl.warmup_dataset_path). Same mechanism as
   #                   pretraining but from an arbitrary path, so different algorithms / sweep configs
   #                   reuse the SAME fixed set of initial demos.
+  #   self         => collect self_num_rollouts successful autonomous rollouts from the initial policy
+  #                   and use them as the offline anchor (no external demo source needed).
   offline_mode: null
-  # [warmup] HITL/demo H5 (e.g. written by scripts/collect_hitl_rollout.py) to load offline demos
-  # from. Every step is relabelled as an offline demo (intervention=2).
+  # [warmup] HITL/demo H5 (e.g. written by scripts/collect_hitl_rollout.py) to load offline demos.
   warmup_dataset_path: null
-  offline_sample_ratio: 0.5       # fraction of each batch from the offline buffer; null = live size ratio
+  # [self] number of SUCCESSFUL autonomous rollouts to collect from the initial policy.
+  self_num_rollouts: 10
+  offline_sample_ratio: 0.5   # fraction of each batch from the offline buffer; null = live size ratio
   # Intervention source.
-  human_mode: simulated                # real (teleop) | simulated (expert policy + criterion)
-  expert_load_dir: checkpoints/square_low_dim/2026-06-11_16-17-39           # [simulated] pretraining run dir (or checkpoint dir) for the expert policy
-  expert_checkpoint: 50000         # [simulated] which checkpoint <step> for the expert (null = latest)
+  human_mode: simulated   # real (teleop) | simulated (expert policy + criterion)
+  expert_load_dir: checkpoints/square_low_dim/2026-06-11_16-17-39   # [simulated] pretraining run dir (or checkpoint dir) for the expert policy
+  expert_checkpoint: 50000   # [simulated] which checkpoint <step> for the expert (null = latest)
   # [simulated] criterion: mile | mile_window (Gaussian log-prob) | diffusion_mile |
   # diffusion_mile_paired | diffusion_mile_window (DiffusionActor denoising-score).
   intervention_criteria: diffusion_mile_paired
@@ -74,15 +77,15 @@ hitl:
   # be <= chunk horizon). null => execute the whole chunk before resampling (a hold longer than the
   # chunk resamples at the chunk end); 1 => resample every step (closed-loop, most reactive).
   sim_execution_horizon: null
-  criteria_window: 10             # [*_window] EMA window over the per-step expert-vs-robot score (log-prob) gap
-  criteria_intervention_cost: 0.0 # [all] probit threshold offset c
+  criteria_window: 10   # [*_window] EMA window over the per-step expert-vs-robot score (log-prob) gap
+  criteria_intervention_cost: 0.0   # [all] probit threshold offset c
   # The following are mainly for the diffusion_mile* criteria (ignored by the Gaussian mile* ones).
   # Left null so each criterion keeps its own default (mile num_samples=50, diffusion_mile=8).
-  criteria_num_samples: 8      # [diffusion_mile] action samples for the probit MC estimate (each = 1 reverse-diffusion)
-  criteria_score_mc_samples: 1 # [diffusion_mile*] diffusion-noising samples used to estimate ell(a,s)
-  criteria_probit_scale: 1.0     # [diffusion_mile*] probit scale beta on the score gap
+  criteria_num_samples: 8   # [diffusion_mile] action samples for the probit MC estimate (each = 1 reverse-diffusion)
+  criteria_score_mc_samples: 1   # [diffusion_mile*] diffusion-noising samples used to estimate ell(a,s)
+  criteria_probit_scale: 1.0   # [diffusion_mile*] probit scale beta on the score gap
   # Dataset-level reweighting for weighted BC (requires alg.offline_alg_name=bc + use_weighted_bc=true).
-  reweighting: null               # null | sirius | iwr
+  reweighting: null   # null | sirius | iwr
 
 # Teleop (keyboard or 3D SpaceMouse) + rendering
 teleop:
@@ -104,5 +107,7 @@ logging:
 eval:
   eval_freq: 1     # Evaluation frequency in epochs
   eval_num_episodes: 50  # Number of episodes for evaluation
+  eval_num_envs: 10  # Parallel eval envs.
+  eval_vectorization: sync  # sync | async
   eval_record_video: true  # Whether to record videos during evaluation
   eval_on_first_step: true  # If true, evaluate on the first step before any training

@@ -21,6 +21,9 @@ then repeats.
   * "warmup"      -> mix a user-provided demo H5 (``hitl.warmup_dataset_path``) as the offline anchor.
                      Same mechanism as "pretraining" but from an arbitrary path, so different
                      algorithms / sweep configs can reuse the SAME fixed set of initial demos.
+  * "self"        -> collect ``hitl.self_num_rollouts`` SUCCESSFUL autonomous rollouts from the
+                     initial (pretrained) policy and use them as the offline anchor. No external demo
+                     source is needed: the policy's own successes act as the anti-forgetting anchor.
 
 Alternatively, set ``hitl.precollected_hitl_dataset`` to a HITL HDF5 written by
 ``scripts/collect_hitl_rollout.py`` to train on precollected interventions instead of collecting
@@ -104,7 +107,7 @@ from robometer_policy_learning.buffers.replay_buffer import ReplayBuffer
 from robometer_policy_learning.buffers.samplers import ChunkedSequentialSampler, RandomSampler
 from robometer_policy_learning.envs.robosuite_wrappers import setup_robomimic_env
 from robometer_policy_learning.loggers.wandb_logger import WandbLogger
-from robometer_policy_learning.rollouts.evaluation_worker import EvaluationWorker
+from robometer_policy_learning.rollouts.evaluation_worker import BatchEvaluationWorker
 from robometer_policy_learning.utils.hitl_utils import (
     HitlRolloutWorker,
     analyze_intervention_segments,
@@ -352,24 +355,20 @@ def main(cfg: DictConfig):
     chunk_size = OmegaConf.select(cfg, "training.chunk_size", default=None)
     n_exec = int(OmegaConf.select(cfg, "training.n_action_steps", default=1) or 1)
     normalize_lowdim = bool(OmegaConf.select(cfg, "training.normalize_lowdim_obs", default=False))
-    # Offline-data mode for aggregation (anti-forgetting). Three options:
+    # Offline-data mode for aggregation (anti-forgetting). Four options:
     #   null         -> no offline data (train on the online buffer only)
     #   "pretraining"-> mix the pretraining demonstration H5 (cfg.env.h5_dataset_path)
     #   "warmup"     -> mix a user-provided demo H5 (hitl.warmup_dataset_path) as the offline anchor
     #                   buffer (lets different algorithms/sweeps reuse the same fixed demo set).
-    # (Bools accepted for backward compatibility: true => "pretraining", false => null.)
+    #   "self"       -> collect hitl.self_num_rollouts SUCCESSFUL autonomous rollouts from the initial
+    #                   policy and use them as the offline anchor (no external demo source needed).
     _offline_raw = OmegaConf.select(cfg, "hitl.offline_mode", default=None)
-    if isinstance(_offline_raw, bool):
-        offline_mode = "pretraining" if _offline_raw else None
-    elif _offline_raw is None:
+    offline_mode = str(_offline_raw).strip().lower()
+    if offline_mode in ("none", "null", ""):
         offline_mode = None
-    else:
-        offline_mode = str(_offline_raw).strip().lower()
-        if offline_mode in ("none", "null", ""):
-            offline_mode = None
-    if offline_mode not in (None, "pretraining", "warmup"):
+    if offline_mode not in (None, "pretraining", "warmup", "self"):
         raise ValueError(
-            f"hitl.offline_mode must be null, 'pretraining', or 'warmup' (got {_offline_raw!r})."
+            f"hitl.offline_mode must be null, 'pretraining', 'warmup', or 'self' (got {_offline_raw!r})."
         )
     use_offline = offline_mode is not None
     store_only_human = bool(OmegaConf.select(cfg, "hitl.store_only_human", default=False))
@@ -453,18 +452,13 @@ def main(cfg: DictConfig):
         elif human_mode != "real":
             raise ValueError(f"hitl.human_mode must be 'real' or 'simulated', got {human_mode!r}.")
 
-    # One sampler instance shared by the online (and offline) buffers so chunked sampling is
-    # consistent across them (the base ReplayBuffer.sample uses its own sampler).
     if chunk_size is None:
         sampler = RandomSampler()
     else:
         gamma = OmegaConf.select(cfg, "offline_algorithm.gamma", default=0.99)
         sampler = ChunkedSequentialSampler(chunk_size=int(chunk_size), obs_as_sequence=False, gamma=gamma)
 
-    # ---- Offline H5 buffer (for low-dim obs stats and/or mixing the pretraining demos). Built when
-    # offline_mode=='pretraining' (mix demos), or whenever we need normalization stats that must match
-    # the pretrained policy. NOT built for 'warmup' (which loads its demos from hitl.warmup_dataset_path
-    # but still reuses the pretraining-dataset stats computed here when normalize_lowdim is on). ----
+    # ---- Offline H5 buffer ----
     lowdim_stats = {}
     offline_buffer = None
     if offline_mode == "pretraining" or normalize_lowdim:
@@ -484,7 +478,6 @@ def main(cfg: DictConfig):
         if offline_mode != "pretraining":
             offline_buffer = None  # only needed for stats
 
-    # ---- Online replay buffer (accumulates HITL rollouts, or the precollected dataset) ----
     online_buffer = ReplayBuffer(
         capacity=int(OmegaConf.select(cfg, "hitl.online_buffer_capacity", default=200000)),
         remove_obs_keys=list(remove_obs_keys),
@@ -493,11 +486,7 @@ def main(cfg: DictConfig):
         max_action=action_max,
     )
 
-    # ---- Warmup buffer (offline_mode='warmup'): load a user-provided demo H5 as the offline anchor
-    # buffer, instead of collecting fresh rollouts. This decouples demo generation from training so
-    # different algorithms / sweep configs reuse the SAME fixed set of initial demos. Low-dim obs are
-    # z-scored with the pretraining-dataset stats (lowdim_stats) and every step is relabelled offline
-    # (LABEL_OFFLINE), exactly like the 'pretraining' source. ----
+    # ---- Warmup buffer ----
     warmup_buffer = None
     if offline_mode == "warmup":
         warmup_dataset_path = OmegaConf.select(cfg, "hitl.warmup_dataset_path", default=None)
@@ -517,7 +506,6 @@ def main(cfg: DictConfig):
             keep_only_human=False, segment_by_intervention=False,
         )
         # Every warmup step is an offline anchor demo: label 2 => BC/action loss only for MILE
-        # (excluded from the probit), label-agnostic for plain BC/flow cloning.
         for t in warmup_buffer.get_all_transitions():
             if t is not None:
                 t.info["intervention"] = LABEL_OFFLINE
@@ -528,6 +516,65 @@ def main(cfg: DictConfig):
         )
         if not warmup_buffer.is_empty():
             analyze_intervention_segments(warmup_buffer, chunk_size=chunk_size, context="warmup demos")
+
+    # ---- Self-collected anchor ----
+    self_buffer = None
+    if offline_mode == "self":
+        self_num_rollouts = int(OmegaConf.select(cfg, "hitl.self_num_rollouts", default=20))
+        self_buffer = ReplayBuffer(
+            capacity=int(OmegaConf.select(cfg, "hitl.online_buffer_capacity", default=200000)),
+            remove_obs_keys=list(remove_obs_keys),
+            sampler=sampler,
+            min_action=action_min,
+            max_action=action_max,
+        )
+        logger.info(
+            f"offline_mode='self': collecting {self_num_rollouts} successful autonomous rollouts from "
+            "the initial policy as the offline anchor buffer (headless, no human/expert)..."
+        )
+        self_worker = HitlRolloutWorker(
+            env=env,
+            actor=actor,
+            online_buffer=self_buffer,
+            device=device,
+            action_dim=action_dim,
+            lowdim_stats=lowdim_stats,
+            remove_obs_keys=remove_obs_keys,
+            n_action_steps=n_exec,
+            store_only_human=False,
+            segment_by_intervention=False,
+            expert_policy=None,
+            intervention_criteria=None,
+            enable_render=False,
+            human_teleop=False,
+        )
+        try:
+            num_kept, attempt = 0, 0
+            while num_kept < self_num_rollouts:
+                _, _, stored, success = self_worker.rollout_episode(
+                    f"self_r{attempt}", phase="SELF-COLLECT", allow_human=False, store=True,
+                    require_success=True,
+                )
+                attempt += 1
+                num_kept += int(stored > 0)
+                logger.info(
+                    f"  self-collect: kept {num_kept}/{self_num_rollouts} rollouts "
+                    f"(attempt {attempt}, success={bool(success)}, stored={stored})"
+                )
+        finally:
+            self_worker.close()
+        # Every self-collected step is an offline anchor demo: label 2 => BC/action loss only for MILE
+        for t in self_buffer.get_all_transitions():
+            if t is not None:
+                t.info["intervention"] = LABEL_OFFLINE
+        offline_buffer = self_buffer
+        logger.info(
+            f"Self-collected anchor: {len(self_buffer)} transitions across {self_num_rollouts} "
+            "successful autonomous rollouts (relabelled offline=2)."
+        )
+        if not self_buffer.is_empty():
+            analyze_intervention_segments(self_buffer, chunk_size=chunk_size, context="self-collected demos")
+
     if precollected_hitl_dataset:
         # HG-DAgger on a precollected dataset: when training a (plain, no-reweighting) cloning algo
         # -- BC or its diffusion analogue DP -- keep only the human-correction steps and drop
@@ -605,9 +652,7 @@ def main(cfg: DictConfig):
             "or (alg.offline_alg_name=dp, offline_algorithm.use_weighted_dp=true)."
         )
 
-    # ---- Rollout/teleop worker (keyboard teleop, chunk execution, episode storage, rendering).
-    # Not built in precollected-dataset mode (no online collection); warmup now loads demos from an
-    # H5, so it needs no worker either. ----
+    # ---- Rollout/teleop worker ----
     debug = bool(OmegaConf.select(cfg, "debug", default=False))
     video_dir = os.path.join(output_dir, "debug_videos") if debug else None
     worker = None
@@ -647,11 +692,22 @@ def main(cfg: DictConfig):
             video_dir=video_dir,
         )
 
-    # ---- Autonomous eval via EvaluationWorker (separate env so chunked actors execute open-loop;
-    # records + logs an eval video each round through the same logger as training). ----
+    # ---- Autonomous eval via BatchEvaluationWorker (separate env so chunked actors execute
+    # open-loop; records + logs an eval video each round). The eval env is VECTORIZED with
+    # eval.eval_num_envs parallel envs; the worker gives each env a quota of episodes and batches the
+    # policy's act() (a full reverse-diffusion sample for DiffusionActors) across all of them in one
+    # GPU forward pass. eval.eval_vectorization selects the backend:
+    #   * "sync"  -> sub-envs step serially in-process; only act() is batched. Modest win for low-dim,
+    #                ~none for images (env stepping/rendering dominates and stays serial).
+    #   * "async" -> one subprocess per env (spawn) so the MuJoCo sims + rendering step CONCURRENTLY.
+    #                Benchmarked ~2x at 10 envs / ~5x at 25 envs for image obs (unbiased success rate),
+    #                at a one-time ~10s spawn cost (the eval env is built once and reused all run).
+    # Async needs a picklable env (raw-image Mode B or low-dim; NOT DINO-embedding Mode A). ----
+    eval_num_envs = int(OmegaConf.select(cfg, "eval.eval_num_envs", default=10))
+    eval_vectorization = str(OmegaConf.select(cfg, "eval.eval_vectorization", default="sync")).lower()
     eval_env, _ = setup_robomimic_env(
         dataset_path=cfg.env.h5_dataset_path,
-        n_envs=1,
+        n_envs=eval_num_envs,
         device=device,
         seed=OmegaConf.select(cfg, "hitl.seed", default=0)+14,
         max_episode_steps=cfg.env.max_episode_steps,
@@ -659,14 +715,16 @@ def main(cfg: DictConfig):
         terminate_on_success=True,
         chunk_size=chunk_size,
         n_action_steps=n_exec,
+        vectorization=eval_vectorization,
     )
-    eval_worker = EvaluationWorker(
+    eval_worker = BatchEvaluationWorker(
         eval_env=eval_env,
         device=device,
         num_episodes=int(cfg.eval.eval_num_episodes),
         record_video=cfg.eval.eval_record_video,
         logger=wandb_logger,
         lowdim_obs_stats=lowdim_stats,
+        max_episode_steps=int(cfg.env.max_episode_steps),
     )
 
     # =====================================================================================
@@ -674,21 +732,12 @@ def main(cfg: DictConfig):
     # =====================================================================================
     rollouts_per_iter = int(OmegaConf.select(cfg, "hitl.rollouts_per_iter", default=5))
     train_epochs_per_iter = int(OmegaConf.select(cfg, "hitl.train_epochs_per_iter", default=1))
-    # train_step count per iteration is derived from the (growing) training-buffer size and the
-    # algorithm batch size each iteration (see below); train_epochs_per_iter scales that count.
     batch_size = int(OmegaConf.select(cfg, "offline_algorithm.batch_size", default=256))
     clear_each_iter = bool(OmegaConf.select(cfg, "hitl.clear_buffer_each_iter", default=False))
     save_interval = int(OmegaConf.select(cfg, "hitl.save_interval", default=1))
 
-    # Best-checkpoint tracking. We keep a GLOBAL best ("best", best over all iterations) for final
-    # selection, and a PER-ITERATION best ("best_iter{it}") used by keep_best to seed the next
-    # iteration. HITL eval often rises then drifts down within an iteration, so both let us recover a
-    # peak policy rather than the drifted end-of-iteration weights.
     best_success_rate = -1.0       # global best across all iterations  -> save_dir/best
     iter_best_success_rate = -1.0  # best within the current iteration  -> save_dir/best_iter{it}
-    # keep_best: before each subsequent online iteration, revert the policy to the PREVIOUS
-    # iteration's best checkpoint, so iterations build on that iteration's peak rather than its
-    # drifted end state. No effect with a precollected dataset (single iteration).
     keep_best = bool(OmegaConf.select(cfg, "hitl.keep_best", default=False))
 
     def _maybe_save_best(metrics, it=None):
@@ -747,7 +796,6 @@ def main(cfg: DictConfig):
                         f"keep_best: no best checkpoint found for iteration {it} (no eval ran during it?); "
                         "keeping current weights"
                     )
-            # Reset per-iteration best tracking so this iteration's best is recorded fresh.
             iter_best_success_rate = -1.0
             # In precollected-dataset mode the online buffer is already populated; do not clear it
             # and do not collect online.
@@ -755,9 +803,6 @@ def main(cfg: DictConfig):
                 online_buffer.clear()
 
             # --- 1) Collect rollouts until rollouts_per_iter SUCCESSFUL trajectories are stored.
-            # Only successful episodes are stored (require_success=True); failed attempts are run
-            # but discarded. No attempt cap: keep going until the success target is met (Ctrl+C to
-            # abort, which saves a checkpoint). Skipped entirely with a precollected dataset. ---
             if not precollected_hitl_dataset:
                 # Count KEPT rollouts (stored>0): an episode is kept only if it passes the
                 # require_success and keep_only_hitl_rollouts (>=1 intervention) filters.

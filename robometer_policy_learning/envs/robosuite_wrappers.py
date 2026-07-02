@@ -361,6 +361,9 @@ def setup_robomimic_env(
     camera_name: str = "agentview",
     wrist_camera_name: Optional[str] = "robot0_eye_in_hand",
     language_instruction: Optional[str] = None,
+    vectorization: str = "sync",
+    async_context: str = "spawn",
+    async_shared_memory: bool = True,
 ) -> Tuple[gym.vector.VectorEnv, List[str]]:
     """
     Create a vectorized robosuite environment reconstructed from a robomimic dataset.
@@ -497,9 +500,30 @@ def setup_robomimic_env(
 
         env_fns.append(make_env)
 
-    env = gym.vector.SyncVectorEnv(env_fns)
+    # Vectorization backend. "sync" steps the sub-envs serially in this process (no CPU parallelism;
+    # fine for low-dim). "async" runs one subprocess per env so the MuJoCo sims (and rendering) step
+    # concurrently across CPU cores -- the real lever when env stepping dominates (e.g. image obs).
+    # Async REQUIRES a fresh-process start method ("spawn"/"forkserver"): "fork" is unsafe once CUDA
+    # is initialized in the parent. Sub-env obs (Box state/images) ship over shared memory; the
+    # 'prompt'/'language' keys are added by the outer wrapper in this process, so they stay out of the
+    # shared-memory obs. DINO-embedding (Mode A) envs must NOT use async (the closure would carry a
+    # CUDA model into every worker) -- assert against it.
+    vec = str(vectorization).lower()
+    if vec == "async":
+        if dinov2_model is not None:
+            raise ValueError(
+                "vectorization='async' is incompatible with a DINOv2 embedding env (Mode A): the "
+                "per-env factory would pickle a CUDA model into every subprocess. Use vectorization="
+                "'sync', or a raw-image (Mode B) policy where images are encoded in the actor."
+            )
+        env = gym.vector.AsyncVectorEnv(env_fns, context=async_context, shared_memory=async_shared_memory)
+    elif vec == "sync":
+        env = gym.vector.SyncVectorEnv(env_fns)
+    else:
+        raise ValueError(f"vectorization must be 'sync' or 'async', got {vectorization!r}.")
     # Adds 'prompt' (and 'language' embedding when sentence_model is provided) to observations.
-    env = VectorLiberoPromptWrapper(env, sentence_model)
+    # Pass the known instruction so the wrapper needn't query subprocess sub-envs under async.
+    env = VectorLiberoPromptWrapper(env, sentence_model, language_instruction=language_instruction)
 
     # Open-loop action chunking on the vectorized env (exposes is_chunk_empty /
     # _get_last_action so the rollout/eval workers execute n_action_steps per chunk).
@@ -507,7 +531,7 @@ def setup_robomimic_env(
         env = VectorActionChunkingWrapper(env, chunk_size=chunk_size, n_action_steps=n_action_steps)
 
     logger.info(
-        f"✓ Created {n_envs} robomimic '{env_name}' environment(s) "
+        f"✓ Created {n_envs} robomimic '{env_name}' environment(s) [{vec}] "
         f"(image_size={image_size}, image_obs_key='{image_obs_key}', "
         f"state='robot0_proprio-state'{' + object-state' if use_full_state else ''})"
     )

@@ -121,6 +121,27 @@ class LiberoPI0Wrapper(gym.Wrapper):
         self.env.close()
 
 
+def _vec_language_instruction(env):
+    """Read ``language_instruction`` from a vector env, working for Sync AND Async envs.
+
+    ``SyncVectorEnv`` keeps the sub-envs in-process (``env.envs``); ``AsyncVectorEnv`` keeps them in
+    subprocesses and instead exposes ``get_attr(name)`` (a per-env tuple). Returns None if neither
+    path yields the attribute.
+    """
+    envs = getattr(env, "envs", None)
+    if envs:  # SyncVectorEnv
+        return getattr(envs[0], "language_instruction", None)
+    get_attr = getattr(env, "get_attr", None)
+    if callable(get_attr):  # AsyncVectorEnv
+        try:
+            vals = get_attr("language_instruction")
+            if vals is not None and len(vals):
+                return vals[0]
+        except Exception:
+            return None
+    return None
+
+
 class VectorLiberoPromptWrapper(gym_vector.VectorWrapper):
     """
     Adds 'prompt' (language instruction) to each observation in a vectorized LIBERO env,
@@ -128,17 +149,18 @@ class VectorLiberoPromptWrapper(gym_vector.VectorWrapper):
     'prompt' is included in each observation dict returned by the vector env.
     """
 
-    def __init__(self, env: gym_vector.VectorEnv, sentence_model: SentenceTransformer = None):
+    def __init__(self, env: gym_vector.VectorEnv, sentence_model: SentenceTransformer = None,
+                 language_instruction: Optional[str] = None):
         # Always set on the wrapper itself so __getattr__ never forwards it to the base env
         self.sentence_model: Optional[SentenceTransformer] = sentence_model
         self.language_encoding: Optional[np.ndarray] = None
 
         super().__init__(env)
-        # Try to extract language_instruction from the base env
-        # This assumes all vectorized envs have the same language_instruction
-        self.language_instruction = None
-        # Handle SyncVectorEnv/AsyncVectorEnv where envs is a list of callables or environments
-        self.language_instruction = env.envs[0].language_instruction
+        # Extract language_instruction from the base env (assumed identical across the vector).
+        # ``language_instruction`` overrides when the caller already knows it (avoids querying
+        # subprocess sub-envs under AsyncVectorEnv). Falls back to Sync/Async-safe lookup.
+        self.language_instruction = language_instruction if language_instruction is not None \
+            else _vec_language_instruction(env)
 
         # Pre-compute language embedding if a model is provided
         if self.sentence_model is not None and self.language_instruction is not None:
@@ -179,11 +201,11 @@ class VectorLiberoPromptWrapper(gym_vector.VectorWrapper):
 
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
-        # Access language_instruction from the first env, which may be wrapped
-        try:
-            self.language_instruction = getattr(self.env.envs[0], "language_instruction", None)
-        except (AttributeError, IndexError):
-            self.language_instruction = None
+        # Refresh language_instruction from the sub-envs (Sync or Async). Keep the current value if
+        # the lookup yields nothing (e.g. fixed robomimic instruction under AsyncVectorEnv).
+        li = _vec_language_instruction(self.env)
+        if li is not None:
+            self.language_instruction = li
         obs = self._add_prompt(obs)
         try:
             n = self.env.num_envs

@@ -14,10 +14,19 @@ Both image pipelines are supported: Mode A policies (precomputed/frozen DINO emb
 DINOv2 encoder rebuilt from ``model.dinov2_model`` and attached to the env so it emits the same
 ``dino_embedding`` key; Mode B policies (actor-side image featurizer) run on raw frames directly.
 
+Pass ``--num-envs > 1`` to evaluate on a VECTORIZED env via :class:`BatchEvaluationWorker`: the
+episodes are split across the parallel envs and the policy's ``act()`` is batched across them in one
+forward pass. ``--vectorization async`` runs one subprocess per env so the sims (and rendering) step
+concurrently, which is the real speedup when env stepping dominates (e.g. image obs); ``sync`` steps
+them serially in-process. Async is incompatible with Mode A (DINO-embedding) envs.
+
 Usage:
     uv run python scripts/eval_policy.py --load-dir /path/to/outputs/2026-06-04/16-21-35
     uv run python scripts/eval_policy.py --load-dir /path/to/run --checkpoint 50000 --num-episodes 50
     uv run python scripts/eval_policy.py --load-dir /path/to/run --seed 0 --record-video
+    # fast batched eval (25 parallel subprocess envs):
+    uv run python scripts/eval_policy.py --load-dir /path/to/run --num-episodes 50 \
+        --num-envs 25 --vectorization async
 """
 
 import os
@@ -36,7 +45,7 @@ from omegaconf import DictConfig, OmegaConf
 from robometer_policy_learning.buffers.h5_replay_buffer import H5ReplayBuffer
 from robometer_policy_learning.buffers.samplers import RandomSampler
 from robometer_policy_learning.envs.robosuite_wrappers import setup_robomimic_env
-from robometer_policy_learning.rollouts.evaluation_worker import EvaluationWorker
+from robometer_policy_learning.rollouts.evaluation_worker import BatchEvaluationWorker, EvaluationWorker
 
 
 def _load_pretrain_cfg(load_dir: str) -> DictConfig:
@@ -88,6 +97,9 @@ def parse_args():
     parser.add_argument("--dataset-path", default=None, help="Override the H5 dataset path used to build the env.")
     parser.add_argument("--record-video", action="store_true", help="Record one episode to evaluation_videos/ (no wandb).")
     parser.add_argument("--n-action-steps", type=int, default=None, help="Number of action steps to execute (default: None = use training.n_action_steps).")
+    parser.add_argument("--num-envs", type=int, default=1, help="Parallel eval envs. >1 batches episodes via BatchEvaluationWorker; 1 = serial.")
+    parser.add_argument("--vectorization", choices=["sync", "async"], default="sync",
+                        help="Vectorization backend for --num-envs>1: 'async' (subprocess per env, concurrent sims) or 'sync' (in-process). Async is incompatible with Mode A DINO envs.")
     return parser.parse_args()
 
 
@@ -149,9 +161,10 @@ def main():
 
     # ---- Evaluation env: chunked open-loop execution, matching train_hitl's eval_env. The DINO /
     # sentence encoders are attached inside setup_robomimic_env when provided (Mode A). ----
+    num_envs = max(1, int(args.num_envs))
     eval_env, _ = setup_robomimic_env(
         dataset_path=dataset_path,
-        n_envs=1,
+        n_envs=num_envs,
         device=device,
         seed=args.seed,
         max_episode_steps=pre_cfg.env.max_episode_steps,
@@ -163,6 +176,7 @@ def main():
         dinov2_processor=dinov2_processor,
         sentence_model=sentence_model,
         image_keys=dino_image_keys,
+        vectorization=args.vectorization,
     )
 
     # ---- Low-dim obs normalization stats: the EvaluationWorker z-scores obs before act(), so when
@@ -188,15 +202,27 @@ def main():
         lowdim_stats = offline_buffer.lowdim_obs_stats
         print(f"Low-dim obs normalization keys: {list(lowdim_stats.keys())}")
 
-    # ---- Run evaluation (no wandb: logger=None). ----
-    eval_worker = EvaluationWorker(
-        eval_env=eval_env,
-        device=device,
-        num_episodes=args.num_episodes,
-        record_video=args.record_video,
-        logger=None,
-        lowdim_obs_stats=lowdim_stats,
-    )
+    # ---- Run evaluation (no wandb: logger=None). Use the batched worker for a vectorized env
+    # (splits the episodes across the parallel envs); the serial worker for a single env. ----
+    if num_envs > 1:
+        eval_worker = BatchEvaluationWorker(
+            eval_env=eval_env,
+            device=device,
+            num_episodes=args.num_episodes,
+            record_video=args.record_video,
+            logger=None,
+            lowdim_obs_stats=lowdim_stats,
+            max_episode_steps=int(pre_cfg.env.max_episode_steps),
+        )
+    else:
+        eval_worker = EvaluationWorker(
+            eval_env=eval_env,
+            device=device,
+            num_episodes=args.num_episodes,
+            record_video=args.record_video,
+            logger=None,
+            lowdim_obs_stats=lowdim_stats,
+        )
 
     try:
         metrics = eval_worker.run(actor)
