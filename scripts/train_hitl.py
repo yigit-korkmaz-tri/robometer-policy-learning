@@ -145,6 +145,8 @@ MILE_STYLE_ALGS = {"mile", "diffusion_mile", "flow_mile"}
 
 # Offline-demo intervention label (online labels 0=policy / 1=human are set by the rollout worker).
 LABEL_OFFLINE = 2
+# Robot (autonomous-policy) intervention label — same as the online policy label set by the worker.
+LABEL_ROBOT = 0
 
 
 def _load_pretrain_cfg(load_dir: str) -> DictConfig:
@@ -563,14 +565,13 @@ def main(cfg: DictConfig):
                 )
         finally:
             self_worker.close()
-        # Every self-collected step is an offline anchor demo: label 2 => BC/action loss only for MILE
+
         for t in self_buffer.get_all_transitions():
             if t is not None:
-                t.info["intervention"] = LABEL_OFFLINE
+                t.info["intervention"] = LABEL_ROBOT
         offline_buffer = self_buffer
         logger.info(
-            f"Self-collected anchor: {len(self_buffer)} transitions across {self_num_rollouts} "
-            "successful autonomous rollouts (relabelled offline=2)."
+            f"Self-collected anchor: {len(self_buffer)} transitions across {self_num_rollouts}."
         )
         if not self_buffer.is_empty():
             analyze_intervention_segments(self_buffer, chunk_size=chunk_size, context="self-collected demos")
