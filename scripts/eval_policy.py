@@ -49,14 +49,45 @@ from robometer_policy_learning.rollouts.evaluation_worker import BatchEvaluation
 
 
 def _load_pretrain_cfg(load_dir: str) -> DictConfig:
-    """Load the Hydra config saved by the pretraining run at ``load_dir/.hydra/config.yaml``."""
+    """Load the Hydra config saved by the run at ``load_dir/.hydra/config.yaml``.
+
+    A HITL run's saved config (scripts/train_hitl.py) does NOT carry env/training/model/policy: those
+    are adopted at runtime from the *pretraining* run it started from, after Hydra has written the
+    config to disk. So when the loaded config lacks ``env`` but points at a pretraining run via
+    ``load_dir``, follow that reference and read env/training/model/policy from there (the actor is
+    still loaded from the HITL run's own checkpoints by the caller).
+    """
     cfg_path = os.path.join(load_dir, ".hydra", "config.yaml")
     if not os.path.exists(cfg_path):
         raise FileNotFoundError(
-            f"Pretraining config not found at {cfg_path}. load_dir must be a run output directory "
+            f"Config not found at {cfg_path}. load_dir must be a run output directory "
             "(it should contain .hydra/config.yaml and checkpoints/<step>/actor.pt)."
         )
-    return OmegaConf.load(cfg_path)
+    cfg = OmegaConf.load(cfg_path)
+    if "env" not in cfg:
+        ref = OmegaConf.select(cfg, "load_dir", default=None)
+        if not ref:
+            raise KeyError(
+                f"{cfg_path} has no 'env' section and no 'load_dir' to follow. It does not look like a "
+                "pretraining run config, and there is no pretraining run to inherit env/training/model/"
+                "policy from."
+            )
+        ref_path = os.path.join(ref, ".hydra", "config.yaml")
+        if not os.path.exists(ref_path):
+            raise FileNotFoundError(
+                f"This looks like a HITL run (its config has no 'env' section); its env/training/model/"
+                f"policy live in the pretraining run at load_dir={ref!r}, but {ref_path} does not exist. "
+                "Run eval from the repo root (the HITL load_dir is stored as a relative path), or "
+                "re-point it."
+            )
+        base = OmegaConf.load(ref_path)
+        print(f"HITL run detected: reading env/training/model/policy from pretraining run {ref}")
+        # Overlay the pretraining env/training/model/policy onto the HITL config so downstream lookups
+        # (env.*, training.*, model.*) resolve, keeping the HITL config's own sections intact.
+        for key in ("env", "training", "model", "policy"):
+            if key in base:
+                cfg[key] = base[key]
+    return cfg
 
 
 def _resolve_checkpoint_dir(load_dir: str, checkpoint=None) -> str:

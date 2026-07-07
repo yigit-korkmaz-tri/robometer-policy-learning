@@ -20,6 +20,7 @@ lambda_intervention: 1.0               # convex weight of the probit BCE loss
 intervention_cost: 0.0                 # probit threshold offset c
 probit_scale: 1.0                      # probit scale beta
 monte_carlo_samples: 10                # K samples for the marginal probit MC estimate
+mc_num_inference_steps: 10             # number of Euler steps for the Monte-Carlo action sampling
 condition_intervention_on_action: false  # use the observed human action a_h on intervention steps
 
 # Flow-MILE specific (flow-matching-loss log-prob proxy)

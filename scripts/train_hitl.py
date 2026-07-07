@@ -875,13 +875,12 @@ def main(cfg: DictConfig):
             buffer_size = len(train_buffer)
             steps_per_epoch = max(1, -(-buffer_size // batch_size))  # ceil(buffer_size / batch_size)
             train_steps_per_iter = steps_per_epoch * train_epochs_per_iter
-            # eval_freq is in epochs; convert to a step interval relative to the current epoch size.
-            eval_freq_epochs = OmegaConf.select(cfg, "eval.eval_freq", default=None)
-            eval_freq_steps = int(eval_freq_epochs * steps_per_epoch) if eval_freq_epochs else None
+            # eval_freq is in timesteps.
+            eval_freq_steps = OmegaConf.select(cfg, "eval.eval_freq", default=None)
             logger.info(
                 f"Training {train_steps_per_iter} steps this iteration "
                 f"({train_epochs_per_iter} epoch(s) x ceil({buffer_size}/{batch_size})={steps_per_epoch} steps/epoch); "
-                f"eval every {eval_freq_epochs} epoch(s) = {eval_freq_steps} steps."
+                f"eval every {eval_freq_steps} steps."
             )
             for i in tqdm(range(train_steps_per_iter), desc="Training", unit="step"):
                 algo.train_step(logging_prefix="train")  # logs internally at algo.step_counter

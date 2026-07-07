@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Optional, Tuple
 
 from robometer_policy_learning.algorithms.configuration_algorithm import BaseAlgorithmConfig
 
@@ -56,6 +56,10 @@ class FlowMILEConfig(BaseAlgorithmConfig):
     probit_scale: float = 1.0
     # Monte-Carlo samples K used to estimate the probit intervention probability.
     monte_carlo_samples: int = 50
+    # Euler ODE steps for the Monte-Carlo action sampling (probit baseline / MILE marginal / anchor
+    # chunks). None => use the actor's own num_inference_steps (as before). Set lower for cheaper MC
+    # sampling; the deployment/eval sampler and the sample-MSE diagnostic keep the actor's full steps.
+    mc_num_inference_steps: Optional[int] = None
     # Condition the intervention probability on the action for intervention steps.
     condition_intervention_on_action: bool = False
 

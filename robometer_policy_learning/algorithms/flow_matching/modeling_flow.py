@@ -223,15 +223,21 @@ class FlowMatchingActor(BaseActor):
         return x
 
     @torch.no_grad()
-    def sample_actions(self, obs: Union[dict, torch.Tensor]) -> torch.Tensor:
-        """Integrate the learned ODE with Euler steps. Returns ``(B, horizon, action_dim)`` in [-1, 1]."""
+    def sample_actions(
+        self, obs: Union[dict, torch.Tensor], num_inference_steps: Optional[int] = None
+    ) -> torch.Tensor:
+        """Integrate the learned ODE with Euler steps. Returns ``(B, horizon, action_dim)`` in [-1, 1].
+
+        ``num_inference_steps`` overrides the actor's default step count for this call.
+        """
+        steps = int(num_inference_steps) if num_inference_steps is not None else self.num_inference_steps
         global_cond = self.encode_obs(obs)
         batch_size = global_cond.shape[0]
         device = global_cond.device
 
         x = torch.randn(batch_size, self.horizon, self.action_dim, device=device)
-        dt = 1.0 / self.num_inference_steps
-        for i in range(self.num_inference_steps):
+        dt = 1.0 / steps
+        for i in range(steps):
             t = i * dt
             t_batch = torch.full((batch_size,), t, device=device, dtype=torch.float32)
             v = self.predict_velocity(x, t_batch, global_cond)
@@ -239,7 +245,9 @@ class FlowMatchingActor(BaseActor):
         return self._maybe_clip(x)
 
     @torch.no_grad()
-    def sample_actions_batch(self, obs: Union[dict, torch.Tensor], num_samples: int) -> torch.Tensor:
+    def sample_actions_batch(
+        self, obs: Union[dict, torch.Tensor], num_samples: int, num_inference_steps: Optional[int] = None
+    ) -> torch.Tensor:
         """Sample ``num_samples`` independent action chunks per observation in ONE batched pass.
 
         Encodes the obs once, tiles the conditioning ``num_samples`` times, and runs a single Euler
@@ -248,11 +256,14 @@ class FlowMatchingActor(BaseActor):
         ``sample_actions`` calls. Equivalent in distribution to ``num_samples`` independent
         ``sample_actions`` calls; only the obs encoding is shared (deterministic given obs).
 
+        ``num_inference_steps`` overrides the actor's default step count for this call.
+
         Returns ``(num_samples, B, horizon, action_dim)`` in [-1, 1].
         """
         num_samples = int(num_samples)
         if num_samples < 1:
             raise ValueError(f"num_samples must be >= 1, got {num_samples}")
+        steps = int(num_inference_steps) if num_inference_steps is not None else self.num_inference_steps
 
         global_cond = self.encode_obs(obs)  # (B, global_cond_dim)
         batch_size = global_cond.shape[0]
@@ -264,8 +275,8 @@ class FlowMatchingActor(BaseActor):
         # initial noise, making the K chunks per obs independent draws.
         cond_rep = global_cond.repeat(num_samples, 1)  # (K*B, global_cond_dim)
         x = torch.randn(kb, self.horizon, self.action_dim, device=device)
-        dt = 1.0 / self.num_inference_steps
-        for i in range(self.num_inference_steps):
+        dt = 1.0 / steps
+        for i in range(steps):
             t = i * dt
             t_batch = torch.full((kb,), t, device=device, dtype=torch.float32)
             v = self.predict_velocity(x, t_batch, cond_rep)

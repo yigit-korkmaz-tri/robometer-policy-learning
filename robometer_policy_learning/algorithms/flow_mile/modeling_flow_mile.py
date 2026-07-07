@@ -128,10 +128,15 @@ class FlowMILE(BaseAlgorithm):
         self.buffer = config.buffer
         self.rollout_policy: Optional[FlowMatchingActor] = None
         self._last_probit_diagnostics = {}  # CDF-input stats from the latest _compute_intervention_probs
+        self._last_score_diagnostics = {}   # raw score means (rollout baseline / observed human) from it
 
         self.batch_size = config.batch_size
         self.learning_starts = config.learning_starts
         self.monte_carlo_samples = int(config.monte_carlo_samples)
+        # Euler steps for MC action sampling; None => use the actor's own num_inference_steps.
+        self.mc_num_inference_steps = (
+            int(config.mc_num_inference_steps) if config.mc_num_inference_steps is not None else None
+        )
         self.score_monte_carlo_samples = int(config.score_monte_carlo_samples)
         self.intervention_cost = float(config.intervention_cost)
         self.probit_scale = float(config.probit_scale)
@@ -168,6 +173,7 @@ class FlowMILE(BaseAlgorithm):
         print(f"FlowMILE: horizon={self.horizon}, action_dim={self.online_actor.action_dim}")
         print(f"FlowMILE: sigma_min={self.sigma_min}")
         print(f"FlowMILE: monte_carlo_samples={self.monte_carlo_samples}")
+        print(f"FlowMILE: mc_num_inference_steps={self.mc_num_inference_steps} (None => actor default)")
         print(f"FlowMILE: score_monte_carlo_samples={self.score_monte_carlo_samples}")
         print(f"FlowMILE: probit_scale={self.probit_scale}")
         print(f"FlowMILE: intervention_cost={self.intervention_cost}")
@@ -286,13 +292,16 @@ class FlowMILE(BaseAlgorithm):
 
         Uses :meth:`FlowMatchingActor.sample_actions_batch` to draw all ``num_samples`` chunks in a
         single batched Euler-integration pass (one obs encode + one ODE loop over a ``K*B`` batch)
-        instead of a Python loop, so the Monte Carlo samples are parallelized on the GPU.
+        instead of a Python loop, so the Monte Carlo samples are parallelized on the GPU. The Euler
+        step count is ``mc_num_inference_steps`` when set, else the actor's own num_inference_steps.
 
         Returns:
             Tensor ``[K, B, horizon, action_dim]`` in normalized action space.
         """
         with torch.no_grad():
-            return policy.sample_actions_batch(obs, int(num_samples))
+            return policy.sample_actions_batch(
+                obs, int(num_samples), num_inference_steps=self.mc_num_inference_steps
+            )
 
     def _flow_losses_with_cond(
         self,
@@ -483,6 +492,12 @@ class FlowMILE(BaseAlgorithm):
         rollout_scores = self._score_stacked_actions(obs, rollout_samples)  # [K, B]
         expected_rollout_score = rollout_scores.mean(dim=0)  # [B]
 
+        # Debug: raw (pre-probit) score means. The rollout baseline E_{a0~pi0} ell(a0,s) is recorded
+        # here; the observed human-correction score is added below when it is computed.
+        self._last_score_diagnostics = {
+            "expected_rollout_score_mean": float(expected_rollout_score.mean().item()),
+        }
+
         # Original MILE marginal over the trainable policy.
         # The expectation is over the trainable policy.  Even when EMA is enabled, use
         # online_actor here; EMA is only for deployment/evaluation.  sample_actions() itself
@@ -520,6 +535,10 @@ class FlowMILE(BaseAlgorithm):
 
             if observed_intervention_mask.any():
                 observed_scores = self._action_scores(obs, actions)  # [B]
+                # Debug: mean observed-action score on the human-correction (label-1) subset only.
+                self._last_score_diagnostics["observed_human_score_mean"] = float(
+                    observed_scores[observed_intervention_mask].mean().item()
+                )
                 # Standardize with the SAME running stats as the marginal (do not update them from
                 # the observed gap) so both probit arguments live on the same scale.
                 # observed_gap = observed_scores - expected_rollout_score.detach()
@@ -574,6 +593,10 @@ class FlowMILE(BaseAlgorithm):
         anchor_losses = []
         total_losses = []
         probit_diagnostics = []  # per-step CDF-input stats for probit_scale / intervention_cost tuning
+        # Raw (pre-probit) score means for debugging: rollout baseline and observed human-correction
+        # score straight out of _compute_intervention_probs (free — already computed for the probit).
+        expected_rollout_score_means = []
+        observed_human_score_means = []
         expert_action_means = []
         sample_mse_errors = []
         unnormalized_sample_mse_errors = []
@@ -634,6 +657,12 @@ class FlowMILE(BaseAlgorithm):
             ).view_as(interventions)
             if self._last_probit_diagnostics:
                 probit_diagnostics.append(self._last_probit_diagnostics)
+            expected_rollout_score_means.append(
+                self._last_score_diagnostics.get("expected_rollout_score_mean", np.nan)
+            )
+            observed_human_score_means.append(
+                self._last_score_diagnostics.get("observed_human_score_mean", np.nan)
+            )
 
             if online_mask.any():
                 intervention_loss = F.binary_cross_entropy(
@@ -741,6 +770,12 @@ class FlowMILE(BaseAlgorithm):
             # => both ~ dataset intervention rate. The gap is the discrimination signal.
             "intervention_prob_policy_mean": float(np.nanmean(iprob_policy_means)) if np.any(~np.isnan(iprob_policy_means)) else float("nan"),
             "intervention_prob_human_mean": float(np.nanmean(iprob_human_means)) if np.any(~np.isnan(iprob_human_means)) else float("nan"),
+            # Raw (pre-probit) score means straight from _compute_intervention_probs: the rollout
+            # baseline E_{a0~pi0} ell(a0,s) and the observed human-correction action score ell(a_h,s).
+            # observed_human_score_mean is NaN unless condition_intervention_on_action=True and the
+            # batch contained label-1 human corrections.
+            "expected_rollout_score_mean": float(np.nanmean(expected_rollout_score_means)) if np.any(~np.isnan(expected_rollout_score_means)) else float("nan"),
+            "observed_human_score_mean": float(np.nanmean(observed_human_score_means)) if np.any(~np.isnan(observed_human_score_means)) else float("nan"),
         }
         # Score diagnostics are computed only on logging steps (log_score_metrics_every), so add them
         # only when collected this train_step; otherwise they are simply skipped for this log.
