@@ -62,6 +62,10 @@ class FlowMILEConfig(BaseAlgorithmConfig):
     mc_num_inference_steps: Optional[int] = None
     # Condition the intervention probability on the action for intervention steps.
     condition_intervention_on_action: bool = False
+    # Condition the non-intervention baseline on the logged robot action: when True, the probit
+    # baseline E_{a0~pi0} ell(a0,s) is replaced by ell(a_logged, s) on non-intervention (label-0)
+    # transitions (the analogue of condition_intervention_on_action for the robot term).
+    condition_nonintervention_on_robot: bool = False
 
     # ----- Flow-matching log-prob proxy (flow-matching loss) -----
     # Flow-matching samples (t, x0) used to estimate the per-sample score ell(a, s).
@@ -72,10 +76,11 @@ class FlowMILEConfig(BaseAlgorithmConfig):
     reference_relative_score: bool = True
 
     # ----- Anchor regularizer (fine-tuning stability) -----
-    # Coefficient for matching the online velocity field to the frozen rollout velocity field on
-    # actions sampled from the rollout policy. 0 disables the anchor loss.
+    # Coefficient for matching the online velocity field to the frozen rollout velocity field on the
+    # buffer's stored non-intervention (label-0) actions. 0 disables the anchor loss.
     anchor_loss_weight: float = 0.0
-    # Rollout-policy action samples used to estimate the anchor loss; must be >= 1.
+    # Flow-matching (t, x0) noise draws averaged per anchor action to estimate the anchor loss;
+    # must be >= 1.
     anchor_monte_carlo_samples: int = 1
 
     # ----- Running-stats normalization of the marginal score gap (ell_theta - E[ell_rollout]) -----

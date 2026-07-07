@@ -22,6 +22,7 @@ probit_scale: 1.0                      # probit scale beta
 monte_carlo_samples: 10                # K samples for the marginal probit MC estimate
 mc_num_inference_steps: 10             # number of Euler steps for the Monte-Carlo action sampling
 condition_intervention_on_action: false  # use the observed human action a_h on intervention steps
+condition_nonintervention_on_robot: false  # baseline = logged robot action's score on label-0 steps (instead of the sampled E_{a0~pi0} baseline)
 
 # Flow-MILE specific (flow-matching-loss log-prob proxy)
 score_monte_carlo_samples: 1           # flow-matching (t, x0) samples used to estimate ell(a, s)
