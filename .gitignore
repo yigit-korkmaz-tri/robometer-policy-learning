@@ -15,6 +15,7 @@ logs/
 data/
 wandb/
 ckpts/
+sweeps/
 evaluation_videos/
 *.png
 *.mp4
