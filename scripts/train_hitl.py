@@ -9,10 +9,9 @@ iteration:
      ``hitl.store_only_human``:
         * False (MILE)      -> store ALL transitions (labels 0/1),
         * True  (HG-DAgger) -> store ONLY the human corrections (label 1);
-  2. trains the configured algorithm for ``hitl.train_epochs_per_iter`` passes over the training
-     buffer (online, optionally mixed with offline demos labelled intervention=2 via
-     MixedReplayBuffer). The per-iteration train_step count is computed as
-     ``ceil(buffer_size / batch_size) * train_epochs_per_iter`` so it scales as the dataset grows;
+  2. trains the configured algorithm for ``hitl.train_steps_per_iter`` gradient steps over the
+     training buffer (online, optionally mixed with offline demos labelled intervention=2 via
+     MixedReplayBuffer);
 then repeats.
 
 ``hitl.offline_mode`` selects the offline-demo source mixed in for anti-forgetting aggregation:
@@ -732,8 +731,7 @@ def main(cfg: DictConfig):
     # Iterative loop (a single pass in precollected-dataset mode)
     # =====================================================================================
     rollouts_per_iter = int(OmegaConf.select(cfg, "hitl.rollouts_per_iter", default=5))
-    train_epochs_per_iter = int(OmegaConf.select(cfg, "hitl.train_epochs_per_iter", default=1))
-    batch_size = int(OmegaConf.select(cfg, "offline_algorithm.batch_size", default=256))
+    train_steps_per_iter = int(OmegaConf.select(cfg, "hitl.train_steps_per_iter", default=1000))
     clear_each_iter = bool(OmegaConf.select(cfg, "hitl.clear_buffer_each_iter", default=False))
     save_interval = int(OmegaConf.select(cfg, "hitl.save_interval", default=1))
 
@@ -870,17 +868,15 @@ def main(cfg: DictConfig):
             # --- 2) Train (rollout_policy = frozen snapshot of the data-collection policy, for MILE) ---
             if needs_rollout_policy:
                 algo.set_rollout_policy(copy.deepcopy(algo.actor))
-            # Derive the per-iteration train_step count from the (growing) training-buffer size so each
-            # iteration does ``train_epochs_per_iter`` passes over the current dataset.
             buffer_size = len(train_buffer)
+            batch_size = int(OmegaConf.select(cfg, "offline_algorithm.batch_size", default=256))
             steps_per_epoch = max(1, -(-buffer_size // batch_size))  # ceil(buffer_size / batch_size)
-            train_steps_per_iter = steps_per_epoch * train_epochs_per_iter
-            # eval_freq is in timesteps.
             eval_freq_steps = OmegaConf.select(cfg, "eval.eval_freq", default=None)
             logger.info(
-                f"Training {train_steps_per_iter} steps this iteration "
-                f"({train_epochs_per_iter} epoch(s) x ceil({buffer_size}/{batch_size})={steps_per_epoch} steps/epoch); "
-                f"eval every {eval_freq_steps} steps."
+                f"Training {train_steps_per_iter} steps this iteration; "
+                f"eval every {eval_freq_steps} steps. "
+                f"1 epoch is {steps_per_epoch} steps with the current dataset "
+                f"(ceil({buffer_size}/{batch_size}))."
             )
             for i in tqdm(range(train_steps_per_iter), desc="Training", unit="step"):
                 algo.train_step(logging_prefix="train")  # logs internally at algo.step_counter

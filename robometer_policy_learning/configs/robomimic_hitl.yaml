@@ -36,9 +36,7 @@ hitl:
   precollected_hitl_dataset: null
   num_iterations: 10              # must be 1 when precollected_hitl_dataset is set
   rollouts_per_iter: 5            # intervention rollouts collected each iteration (online mode only)
-  train_epochs_per_iter: 2        # passes over the training buffer each iteration; the per-iteration
-                                  # train_step count is ceil(buffer_size / batch_size) * this, so it
-                                  # scales as the (online + offline) dataset grows.
+  train_steps_per_iter: 1000  # fixed number of gradient steps over the training buffer each iteration
   online_buffer_capacity: 500000
   clear_buffer_each_iter: false   # false = accumulate online data across iterations
   save_interval: 1                # save a checkpoint every N HITL iterations
