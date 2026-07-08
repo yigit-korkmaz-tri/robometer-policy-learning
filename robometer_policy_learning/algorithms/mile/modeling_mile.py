@@ -63,6 +63,17 @@ def aggregate_probit_diagnostics(diag_list: list, prefix: str = "probit_") -> di
     return out
 
 
+def proximal_score_loss(scores: torch.Tensor) -> torch.Tensor:
+    """Symmetric softplus proximal penalty keeping a score r_theta(s, a) near zero.
+
+        L_prox = mean_{s,a} 0.5 * [ softplus(r) + softplus(-r) ]
+
+    Minimized at r = 0 and growing ~|r| for large |r| (a smooth, L1-like magnitude penalty),
+    so it discourages the score from drifting to large positive or negative values.
+    """
+    return 0.5 * (F.softplus(scores) + F.softplus(-scores)).mean()
+
+
 class MILE(BaseAlgorithm):
     """
     Model-based Intervention Learning (MILE) algorithm.

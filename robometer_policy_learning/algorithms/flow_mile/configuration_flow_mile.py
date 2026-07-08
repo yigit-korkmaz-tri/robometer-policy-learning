@@ -83,6 +83,15 @@ class FlowMILEConfig(BaseAlgorithmConfig):
     # must be >= 1.
     anchor_monte_carlo_samples: int = 1
 
+    # ----- Proximal score regularizer (score-magnitude stability) -----
+    # Coefficient for the symmetric softplus proximal penalty
+    # L_prox = mean 0.5 * [softplus(r) + softplus(-r)] applied to the online actor's score r of the
+    # rollout-policy samples (the probit baseline term). It keeps that score near 0, penalizing the
+    # tendency to satisfy the MILE gap by driving the rollout score strongly negative rather than by
+    # raising the human-correction score. 0 disables it. Uses the same score definition as the probit
+    # (reference-relative when reference_relative_score=True).
+    proximal_loss_weight: float = 0.0
+
     # ----- Running-stats normalization of the marginal score gap (ell_theta - E[ell_rollout]) -----
     # When True, the per-state score gap fed to the probit is standardized by an EMA of its running
     # mean/variance BEFORE applying probit_scale / intervention_cost. This decouples those two

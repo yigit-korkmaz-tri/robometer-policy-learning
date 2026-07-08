@@ -28,7 +28,8 @@ condition_nonintervention_on_robot: false  # baseline = logged robot action's sc
 score_monte_carlo_samples: 1           # flow-matching (t, x0) samples used to estimate ell(a, s)
 reference_relative_score: true        # use loss_0 - loss_theta instead of -loss_theta (needs rollout policy)
 
-# Anchor regularizer (fine-tuning stability against the frozen rollout velocity field)
+# Regularizers (fine-tuning stability against the frozen rollout velocity field)
+proximal_loss_weight: 0.0                # 0 disables the proximal loss
 anchor_loss_weight: 0.001                # 0 disables the anchor loss
 anchor_monte_carlo_samples: 1          # rollout-policy action samples for the anchor loss (>= 1)
 

@@ -34,6 +34,7 @@ from robometer_policy_learning.algorithms.mile.modeling_mile import (
     aggregate_probit_diagnostics,
     normal_cdf,
     probit_cdf_diagnostics,
+    proximal_score_loss,
 )
 
 
@@ -150,6 +151,12 @@ class FlowMILE(BaseAlgorithm):
         self.reference_relative_score = bool(config.reference_relative_score)
         self.anchor_loss_weight = float(config.anchor_loss_weight)
         self.anchor_monte_carlo_samples = int(config.anchor_monte_carlo_samples)
+        self.proximal_loss_weight = float(config.proximal_loss_weight)
+        # Proximal-loss scalar + per-component diagnostics from the latest _compute_intervention_probs
+        # (softplus penalty on the rollout and human scores); kept on self so train_step can add /
+        # log them without re-scoring.
+        self._last_proximal_loss = torch.zeros((), device=self.device)
+        self._last_proximal_diagnostics = {}
 
         # Optional running-stats standardization of the probit score gap.
         self._init_score_gap_normalization()
@@ -186,6 +193,7 @@ class FlowMILE(BaseAlgorithm):
         print(f"FlowMILE: reference_relative_score={self.reference_relative_score}")
         print(f"FlowMILE: anchor_loss_weight={self.anchor_loss_weight}")
         print(f"FlowMILE: anchor_monte_carlo_samples={self.anchor_monte_carlo_samples}")
+        print(f"FlowMILE: proximal_loss_weight={self.proximal_loss_weight}")
         print(f"FlowMILE: normalize_score_gaps={self.normalize_score_gaps}")
         if self.normalize_score_gaps:
             print(
@@ -460,6 +468,23 @@ class FlowMILE(BaseAlgorithm):
 
         return torch.stack(anchor_losses).mean()
 
+    def _finalize_proximal_loss(self, proximal_terms: dict):
+        """Combine per-term proximal penalties into the stored scalar + diagnostics.
+
+        ``proximal_terms`` maps a component name (``rollout`` / ``training`` / ``observed``) to its
+        scalar :func:`proximal_score_loss` value. The components are summed into
+        ``self._last_proximal_loss`` (added to the total loss in ``train_step``) and their floats are
+        stored in ``self._last_proximal_diagnostics`` for logging. A no-op zero scalar when empty.
+        """
+        if proximal_terms:
+            self._last_proximal_loss = sum(proximal_terms.values())
+            self._last_proximal_diagnostics = {
+                f"proximal_loss_{name}": float(value.item()) for name, value in proximal_terms.items()
+            }
+        else:
+            self._last_proximal_loss = torch.zeros((), device=self.device)
+            self._last_proximal_diagnostics = {}
+
     def _compute_intervention_probs(
         self,
         obs: Union[dict, torch.Tensor],
@@ -498,6 +523,10 @@ class FlowMILE(BaseAlgorithm):
         rollout_scores = self._score_stacked_actions(obs, rollout_samples)  # [K, B]
         expected_rollout_score = rollout_scores.mean(dim=0)  # [B]
 
+        # Proximal regularizer
+        compute_proximal = self.proximal_loss_weight > 0.0
+        proximal_terms = {}
+
         # Debug: raw (pre-probit) score means. The rollout baseline E_{a0~pi0} ell(a0,s) is recorded
         # here; the observed human-correction score is added below when it is computed.
         self._last_score_diagnostics = {
@@ -523,6 +552,10 @@ class FlowMILE(BaseAlgorithm):
                 expected_rollout_score = expected_rollout_score.clone()
                 expected_rollout_score[nonintervention_mask] = robot_scores[nonintervention_mask]
 
+        # Proximal on the baseline term of the probit difference (post robot-substitution).
+        if compute_proximal:
+            proximal_terms["rollout"] = proximal_score_loss(expected_rollout_score)
+
         # Original MILE marginal over the trainable policy.
         # The expectation is over the trainable policy.  Even when EMA is enabled, use
         # online_actor here; EMA is only for deployment/evaluation.  sample_actions() itself
@@ -533,6 +566,10 @@ class FlowMILE(BaseAlgorithm):
             self.monte_carlo_samples,
         )
         training_scores = self._score_stacked_actions(obs, training_samples)  # [K, B]
+
+        # Proximal on the marginal term of the probit difference.
+        if compute_proximal:
+            proximal_terms["training"] = proximal_score_loss(training_scores)
 
         probit_diff_marginal = training_scores - expected_rollout_score.unsqueeze(0)  # [K, B]
 
@@ -560,6 +597,12 @@ class FlowMILE(BaseAlgorithm):
 
             if observed_intervention_mask.any():
                 observed_scores = self._action_scores(obs, actions)  # [B]
+                # Proximal on the observed term of the probit difference, on the label-1
+                # human-correction subset that actually replaces the marginal below.
+                if compute_proximal:
+                    proximal_terms["observed"] = proximal_score_loss(
+                        observed_scores[observed_intervention_mask]
+                    )
                 # Debug: mean observed-action score on the human-correction (label-1) subset only.
                 self._last_score_diagnostics["observed_human_score_mean"] = float(
                     observed_scores[observed_intervention_mask].mean().item()
@@ -574,6 +617,7 @@ class FlowMILE(BaseAlgorithm):
                 intervention_probs = intervention_probs.clone()
                 intervention_probs[observed_intervention_mask] = observed_probs[observed_intervention_mask]
 
+        self._finalize_proximal_loss(proximal_terms)
         return intervention_probs.clamp(EPS, 1.0 - EPS)
 
     def _compute_actor_bc_loss(
@@ -616,6 +660,12 @@ class FlowMILE(BaseAlgorithm):
         actor_losses = []
         intervention_losses = []
         anchor_losses = []
+        proximal_losses = []
+        # Per-term proximal components (score terms of the probit difference): baseline rollout,
+        # marginal training-policy samples, observed human-correction (label-1) actions.
+        proximal_rollout_losses = []
+        proximal_training_losses = []
+        proximal_observed_losses = []
         total_losses = []
         probit_diagnostics = []  # per-step CDF-input stats for probit_scale / intervention_cost tuning
         # Raw (pre-probit) score means for debugging: rollout baseline and observed human-correction
@@ -705,10 +755,12 @@ class FlowMILE(BaseAlgorithm):
 
             actor_loss, velocity_pred_mean = self._compute_actor_bc_loss(obs, actions, action_mask)
             anchor_loss = self._compute_anchor_loss(obs=obs, actions=actions, mask=policy_mask)
+            proximal_loss = self._last_proximal_loss
             total_loss = (
                 actor_loss
                 + self.lambda_intervention * intervention_loss
                 + self.anchor_loss_weight * anchor_loss
+                + self.proximal_loss_weight * proximal_loss
             )
 
             self.actor_optimizer.zero_grad()
@@ -728,6 +780,10 @@ class FlowMILE(BaseAlgorithm):
             actor_losses.append(actor_loss.item())
             intervention_losses.append(intervention_loss.item())
             anchor_losses.append(anchor_loss.item())
+            proximal_losses.append(proximal_loss.item())
+            proximal_rollout_losses.append(self._last_proximal_diagnostics.get("proximal_loss_rollout", np.nan))
+            proximal_training_losses.append(self._last_proximal_diagnostics.get("proximal_loss_training", np.nan))
+            proximal_observed_losses.append(self._last_proximal_diagnostics.get("proximal_loss_observed", np.nan))
             total_losses.append(total_loss.item())
             velocity_pred_means.append(velocity_pred_mean.item() if isinstance(velocity_pred_mean, torch.Tensor) else float(velocity_pred_mean))
 
@@ -793,6 +849,10 @@ class FlowMILE(BaseAlgorithm):
             "actor_loss": float(np.mean(actor_losses)),
             "intervention_loss": float(np.mean(intervention_losses)),
             "anchor_loss": float(np.mean(anchor_losses)),
+            "proximal_loss": float(np.mean(proximal_losses)),
+            "proximal_loss_rollout": float(np.nanmean(proximal_rollout_losses)) if np.any(~np.isnan(proximal_rollout_losses)) else float("nan"),
+            "proximal_loss_training": float(np.nanmean(proximal_training_losses)) if np.any(~np.isnan(proximal_training_losses)) else float("nan"),
+            "proximal_loss_observed": float(np.nanmean(proximal_observed_losses)) if np.any(~np.isnan(proximal_observed_losses)) else float("nan"),
             "expert_action_mean": float(np.nanmean(expert_action_means)),
             "velocity_pred_mean": float(np.mean(velocity_pred_means)),
             "intervention_prob_mean": float(intervention_probs[online_mask].mean().item()) if online_mask.any() else float("nan"),

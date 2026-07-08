@@ -31,6 +31,7 @@ from robometer_policy_learning.algorithms.mile.modeling_mile import (
     aggregate_probit_diagnostics,
     normal_cdf,
     probit_cdf_diagnostics,
+    proximal_score_loss,
 )
 
 
@@ -118,6 +119,12 @@ class DiffusionMILE(BaseAlgorithm):
         self.reference_relative_score = bool(config.reference_relative_score)
         self.anchor_loss_weight = float(config.anchor_loss_weight)
         self.anchor_monte_carlo_samples = int(config.anchor_monte_carlo_samples)
+        self.proximal_loss_weight = float(config.proximal_loss_weight)
+        # Proximal-loss scalar + per-component diagnostics from the latest _compute_intervention_probs
+        # (softplus penalty on the rollout and human scores); kept on self so train_step can add /
+        # log them without re-scoring.
+        self._last_proximal_loss = torch.zeros((), device=self.device)
+        self._last_proximal_diagnostics = {}
 
         # Optional running-stats standardization of the probit score gap.
         self._init_score_gap_normalization()
@@ -152,6 +159,7 @@ class DiffusionMILE(BaseAlgorithm):
         print(f"DiffusionMILE: reference_relative_score={self.reference_relative_score}")
         print(f"DiffusionMILE: anchor_loss_weight={self.anchor_loss_weight}")
         print(f"DiffusionMILE: anchor_monte_carlo_samples={self.anchor_monte_carlo_samples}")
+        print(f"DiffusionMILE: proximal_loss_weight={self.proximal_loss_weight}")
         print(f"DiffusionMILE: normalize_score_gaps={self.normalize_score_gaps}")
         if self.normalize_score_gaps:
             print(
@@ -427,6 +435,23 @@ class DiffusionMILE(BaseAlgorithm):
 
         return torch.stack(anchor_losses).mean()
 
+    def _finalize_proximal_loss(self, proximal_terms: dict):
+        """Combine per-term proximal penalties into the stored scalar + diagnostics.
+
+        ``proximal_terms`` maps a component name (``rollout`` / ``training`` / ``observed``) to its
+        scalar :func:`proximal_score_loss` value. The components are summed into
+        ``self._last_proximal_loss`` (added to the total loss in ``train_step``) and their floats are
+        stored in ``self._last_proximal_diagnostics`` for logging. A no-op zero scalar when empty.
+        """
+        if proximal_terms:
+            self._last_proximal_loss = sum(proximal_terms.values())
+            self._last_proximal_diagnostics = {
+                f"proximal_loss_{name}": float(value.item()) for name, value in proximal_terms.items()
+            }
+        else:
+            self._last_proximal_loss = torch.zeros((), device=self.device)
+            self._last_proximal_diagnostics = {}
+
     def _compute_intervention_probs(
         self,
         obs: Union[dict, torch.Tensor],
@@ -455,6 +480,18 @@ class DiffusionMILE(BaseAlgorithm):
         rollout_scores = self._score_stacked_actions(obs, rollout_samples)  # [K, B]
         expected_rollout_score = rollout_scores.mean(dim=0)  # [B]
 
+        # Proximal regularizer: keep every score term that enters the probit difference near 0 -- the
+        # marginal/observed first term (training_scores / observed_scores) AND the expected-rollout
+        # baseline -- so the MILE gap is widened by a modest separation rather than by driving either
+        # score to large magnitude. Each grad-carrying term is accumulated below as it is computed,
+        # then combined in _finalize_proximal_loss (empty => zero scalar when disabled).
+        compute_proximal = self.proximal_loss_weight > 0.0
+        proximal_terms = {}
+
+        # Proximal on the baseline (second) term of the probit difference.
+        if compute_proximal:
+            proximal_terms["rollout"] = proximal_score_loss(expected_rollout_score)
+
         # Original MILE marginal over the trainable policy.
         # The expectation is over the trainable policy.  Even when EMA is enabled, use
         # online_actor here; EMA is only for deployment/evaluation.  sample_actions() itself
@@ -465,6 +502,10 @@ class DiffusionMILE(BaseAlgorithm):
             self.monte_carlo_samples,
         )
         training_scores = self._score_stacked_actions(obs, training_samples)  # [K, B]
+
+        # Proximal on the marginal (first) term of the probit difference.
+        if compute_proximal:
+            proximal_terms["training"] = proximal_score_loss(training_scores)
 
         probit_diff_marginal = training_scores - expected_rollout_score.unsqueeze(0)  # [K, B]
 
@@ -492,6 +533,12 @@ class DiffusionMILE(BaseAlgorithm):
 
             if observed_intervention_mask.any():
                 observed_scores = self._action_scores(obs, actions)  # [B]
+                # Proximal on the observed (first) term of the probit difference, on the label-1
+                # human-correction subset that actually replaces the marginal below.
+                if compute_proximal:
+                    proximal_terms["observed"] = proximal_score_loss(
+                        observed_scores[observed_intervention_mask]
+                    )
                 # Standardize with the SAME running stats as the marginal (do not update them from
                 # the observed gap) so both probit arguments live on the same scale.
                 normalized_observed_gap = self._normalize_score_gap(observed_scores - expected_rollout_score)
@@ -500,6 +547,7 @@ class DiffusionMILE(BaseAlgorithm):
                 intervention_probs = intervention_probs.clone()
                 intervention_probs[observed_intervention_mask] = observed_probs[observed_intervention_mask]
 
+        self._finalize_proximal_loss(proximal_terms)
         return intervention_probs.clamp(EPS, 1.0 - EPS)
 
     def _compute_actor_bc_loss(
@@ -551,6 +599,12 @@ class DiffusionMILE(BaseAlgorithm):
         actor_losses = []
         intervention_losses = []
         anchor_losses = []
+        proximal_losses = []
+        # Per-term proximal components (score terms of the probit difference): baseline rollout,
+        # marginal training-policy samples, observed human-correction (label-1) actions.
+        proximal_rollout_losses = []
+        proximal_training_losses = []
+        proximal_observed_losses = []
         total_losses = []
         probit_diagnostics = []  # per-step CDF-input stats for probit_scale / intervention_cost tuning
         expert_action_means = []
@@ -618,10 +672,14 @@ class DiffusionMILE(BaseAlgorithm):
                 actions=actions,
                 interventions=interventions,
             )
+            # Proximal penalty on the rollout scores, computed during _compute_intervention_probs
+            # above (shares that call's grad graph).
+            proximal_loss = self._last_proximal_loss
             total_loss = (
                 actor_loss
                 + self.lambda_intervention * intervention_loss
                 + self.anchor_loss_weight * anchor_loss
+                + self.proximal_loss_weight * proximal_loss
             )
 
             self.actor_optimizer.zero_grad()
@@ -641,6 +699,10 @@ class DiffusionMILE(BaseAlgorithm):
             actor_losses.append(actor_loss.item())
             intervention_losses.append(intervention_loss.item())
             anchor_losses.append(anchor_loss.item())
+            proximal_losses.append(proximal_loss.item())
+            proximal_rollout_losses.append(self._last_proximal_diagnostics.get("proximal_loss_rollout", np.nan))
+            proximal_training_losses.append(self._last_proximal_diagnostics.get("proximal_loss_training", np.nan))
+            proximal_observed_losses.append(self._last_proximal_diagnostics.get("proximal_loss_observed", np.nan))
             total_losses.append(total_loss.item())
             noise_pred_means.append(noise_pred_mean.item() if isinstance(noise_pred_mean, torch.Tensor) else float(noise_pred_mean))
 
@@ -694,6 +756,10 @@ class DiffusionMILE(BaseAlgorithm):
             "actor_loss": float(np.mean(actor_losses)),
             "intervention_loss": float(np.mean(intervention_losses)),
             "anchor_loss": float(np.mean(anchor_losses)),
+            "proximal_loss": float(np.mean(proximal_losses)),
+            "proximal_loss_rollout": float(np.nanmean(proximal_rollout_losses)) if np.any(~np.isnan(proximal_rollout_losses)) else float("nan"),
+            "proximal_loss_training": float(np.nanmean(proximal_training_losses)) if np.any(~np.isnan(proximal_training_losses)) else float("nan"),
+            "proximal_loss_observed": float(np.nanmean(proximal_observed_losses)) if np.any(~np.isnan(proximal_observed_losses)) else float("nan"),
             "expert_action_mean": float(np.nanmean(expert_action_means)),
             "noise_pred_mean": float(np.mean(noise_pred_means)),
             "intervention_prob_mean": float(intervention_probs[online_mask].mean().item()) if online_mask.any() else float("nan"),
