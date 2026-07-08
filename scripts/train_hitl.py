@@ -753,7 +753,7 @@ def main(cfg: DictConfig):
         if it is not None and sr > iter_best_success_rate:
             iter_best_success_rate = sr
             save_checkpoint(algo, save_dir, f"best_iter{it}")
-            logger.info(f"New iter-{it + 1} best eval success_rate={sr:.3f}; saved checkpoint to {os.path.join(save_dir, f'best_iter{it}')}")
+            logger.info(f"New iter-{it} best eval success_rate={sr:.3f}; saved checkpoint to {os.path.join(save_dir, f'best_iter{it}')}")
 
     def _load_best_weights(tag) -> bool:
         """Reload checkpoint ``save_dir/<tag>`` weights IN PLACE into actor / online_actor.
