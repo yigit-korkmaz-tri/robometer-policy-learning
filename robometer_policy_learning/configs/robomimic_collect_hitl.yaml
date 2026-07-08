@@ -27,8 +27,8 @@ hitl:
   collect_num_rollouts: 50        # number of KEPT rollouts to collect
   # true => keep only successful rollouts with >= 1 human intervention; false => keep all successful
   # rollouts (intervention-free ones included). Counts toward collect_num_rollouts only when kept.
-  keep_only_hitl_rollouts: false
-  collect_output_path: data/real_hitl_rollouts_flow_50_demos.hdf5       # output .hdf5 path; null => <hydra_output_dir>/hitl_rollouts.hdf5
+  keep_only_hitl_rollouts: true
+  collect_output_path: data/real_square_hitl_rollouts_flow_50_demos.hdf5       # output .hdf5 path; null => <hydra_output_dir>/hitl_rollouts.hdf5
 
   # ----- intervention source -----
   human_mode: real           # real (teleop) | simulated (expert policy + criterion)
