@@ -15,8 +15,8 @@ debug: false
 # Data-collection (rollout) policy: a pretraining run OUTPUT DIRECTORY containing
 # `.hydra/config.yaml` (env/training/model/policy read from there) and `checkpoints/<step>/actor.pt`.
 # `checkpoint` selects which <step> (null = latest available).
-load_dir: checkpoints/square_low_dim/2026-06-11_16-17-39
-checkpoint: 20000
+load_dir: checkpoints/square_low_dim/2026-06-22_15-58-08
+checkpoint: 10000
 
 hitl:
   seed: 0
@@ -24,11 +24,11 @@ hitl:
   store_only_human: false         # false = store all steps; true = store only human corrections
 
   # ----- output -----
-  collect_num_rollouts: 5        # number of KEPT rollouts to collect
+  collect_num_rollouts: 50        # number of KEPT rollouts to collect
   # true => keep only successful rollouts with >= 1 human intervention; false => keep all successful
   # rollouts (intervention-free ones included). Counts toward collect_num_rollouts only when kept.
-  keep_only_hitl_rollouts: true
-  collect_output_path: hitl_rollouts_30_demos.hdf5       # output .hdf5 path; null => <hydra_output_dir>/hitl_rollouts.hdf5
+  keep_only_hitl_rollouts: false
+  collect_output_path: data/real_hitl_rollouts_flow_50_demos.hdf5       # output .hdf5 path; null => <hydra_output_dir>/hitl_rollouts.hdf5
 
   # ----- intervention source -----
   human_mode: real           # real (teleop) | simulated (expert policy + criterion)
