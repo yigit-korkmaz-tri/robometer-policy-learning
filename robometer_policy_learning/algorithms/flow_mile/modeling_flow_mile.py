@@ -78,9 +78,9 @@ class FlowMILE(BaseAlgorithm):
     * score_monte_carlo_samples: number of flow-matching samples used to estimate ell(a,s)
     * reference_relative_score: use ell_{theta,0} = loss_0 - loss_theta instead of -loss_theta
     * anchor_loss_weight: coefficient for matching the online velocity field to the frozen rollout
-      velocity field on the buffer's stored non-intervention (label-0) actions
-    * anchor_monte_carlo_samples: number of flow-matching (t, x0) noise draws averaged per anchor
-      action when matching velocity fields
+      velocity field on actions sampled from the rollout policy
+    * anchor_monte_carlo_samples: number of action chunks sampled from the frozen rollout policy (per
+      state) that the anchor loss matches velocity fields on
     * normalize_score_gaps: standardize the probit score gap by an EMA running mean/std before
       applying probit_scale / intervention_cost (with score_gap_ema_decay, score_gap_norm_eps,
       score_gap_std_min, score_gap_clip)
@@ -416,28 +416,25 @@ class FlowMILE(BaseAlgorithm):
     def _compute_anchor_loss(
         self,
         obs: Union[dict, torch.Tensor],
-        actions: torch.Tensor,
-        mask: torch.Tensor,
+        rollout_samples: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """Anchor online actor to frozen rollout policy on stored non-intervention (label-0) actions.
+        """Anchor online actor to frozen rollout policy on actions sampled from the frozen policy.
 
-        Matches the online velocity field to the frozen rollout policy's field on the buffer's
-        *accepted robot* actions (intervention label 0) for the states where they occurred, rather
-        than on fresh chunks sampled from the frozen policy:
+        We draw fresh action chunks from the frozen rollout policy on the *full* batch of states 
+        and match the online velocity field to the frozen field there:
 
-            E_{(s,a)~D_0, t, x0}
-                || v_theta(a_t,t,s) - v_0(a_t,t,s) ||^2
+            E_{s~D, a0~pi_0(.|s), t, x0}
+                || v_theta(a0_t,t,s) - v_0(a0_t,t,s) ||^2
 
-        where D_0 is the non-intervention subset of the batch (``mask``). This pins the online actor's
-        score of the actions it actually took autonomously to the frozen policy's. Without it, the
-        online actor's flow-matching score of rollout-like actions (rollout_score_mean) drifts down,
-        which inflates the MILE intervention probability even when the human score is roughly
-        stationary.
+        This directly pins the online actor's score of rollout-like actions to the frozen policy's.
+        Without it, the online actor's flow-matching score of rollout samples (rollout_score_mean)
+        drifts down, which inflates the MILE intervention probability even when the human score is
+        roughly stationary.
 
-        ``mask`` ``[B]`` selects the non-intervention (label-0) transitions. ``anchor_monte_carlo_samples``
-        fresh flow-matching (t, x0) draws are averaged per anchor action (gradients flow only through
-        the online velocity prediction; the frozen field is a no_grad target). Returns 0 when the batch
-        has no non-intervention transitions.
+        ``rollout_samples`` ``[J, B, H, A]`` (>= anchor_monte_carlo_samples) lets the caller pass
+        chunks already drawn from the frozen rollout policy this step (e.g. the probit's MC samples)
+        so the (expensive) ODE sampling is not repeated; the first ``anchor_monte_carlo_samples`` are
+        used. When None, fresh chunks are sampled here.
         """
         if self.anchor_loss_weight <= 0.0:
             return torch.zeros((), device=self.device)
@@ -445,20 +442,21 @@ class FlowMILE(BaseAlgorithm):
         if self.rollout_policy is None:
             raise RuntimeError("anchor_loss_weight > 0 requires a frozen rollout_policy.")
 
-        if not mask.any():
-            return torch.zeros((), device=self.device)
+        n = self.anchor_monte_carlo_samples
+        if rollout_samples is not None and rollout_samples.shape[0] >= n:
+            rollout_samples = rollout_samples[:n]
+        else:
+            rollout_samples = self._sample_policy_actions(self.rollout_policy, obs, n)  # [n, B, H, A]
 
-        selected_obs = self._index_obs(obs, mask)
-        selected_actions = self._prepare_actions(actions[mask]).float()
-
-        # Encode obs once per actor; the conditioning is reused across the MC noise draws.
-        online_global_cond = self.online_actor.encode_obs(selected_obs)
+        # Encode obs once per actor; the conditioning is reused across the K sampled action chunks.
+        online_global_cond = self.online_actor.encode_obs(obs)
         with torch.no_grad():
-            ref_global_cond = self.rollout_policy.encode_obs(selected_obs)
+            ref_global_cond = self.rollout_policy.encode_obs(obs)
 
         anchor_losses = []
-        for _ in range(self.anchor_monte_carlo_samples):
-            x_t, t, _ = _flow_matching_target(self.online_actor, selected_actions)
+        for k in range(rollout_samples.shape[0]):
+            sampled_actions = self._prepare_actions(rollout_samples[k]).float()
+            x_t, t, _ = _flow_matching_target(self.online_actor, sampled_actions)
 
             online_pred = self.online_actor.predict_velocity(x_t, t, online_global_cond)
             with torch.no_grad():
@@ -705,7 +703,7 @@ class FlowMILE(BaseAlgorithm):
             interventions = self._extract_interventions(batch)
             action_mask = interventions > 0.5  # {1, 2}: human corrections + offline demos
             online_mask = interventions < 1.5  # {0, 1}: valid intervention labels
-            policy_mask = interventions < 0.5  # {0}: non-intervention (robot/accepted) — anchor targets
+            policy_mask = interventions < 0.5  # {0}: non-intervention (robot/accepted)
 
             if self.config.obs_noise_std > 0:
                 if isinstance(obs, dict):
@@ -718,11 +716,8 @@ class FlowMILE(BaseAlgorithm):
                 if action_mask.any():
                     actions[action_mask] = actions[action_mask] + torch.randn_like(actions[action_mask]) * self.config.action_noise_std
 
-            # Sample frozen rollout-policy chunks ONCE this step; reused by the probit baseline and
-            # the rollout-score diagnostic (same frozen policy + same obs). Sharing the samples across
-            # these Monte Carlo estimates is a standard variance-reduction trick and does not bias
-            # either of them, while saving an extra ODE rollout per step. (The anchor loss no longer
-            # uses these — it anchors on the buffer's stored non-intervention actions instead.)
+            # Sample frozen rollout-policy chunks ONCE this step; reused by the probit baseline, the
+            # anchor loss, and the rollout-score diagnostic.
             rollout_samples = self._sample_policy_actions(
                 self.rollout_policy, obs, self.monte_carlo_samples
             )  # [K, B, H, A]
@@ -754,7 +749,7 @@ class FlowMILE(BaseAlgorithm):
                 intervention_loss = torch.zeros((), device=self.device)
 
             actor_loss, velocity_pred_mean = self._compute_actor_bc_loss(obs, actions, action_mask)
-            anchor_loss = self._compute_anchor_loss(obs=obs, actions=actions, mask=policy_mask)
+            anchor_loss = self._compute_anchor_loss(obs=obs, rollout_samples=rollout_samples)
             proximal_loss = self._last_proximal_loss
             total_loss = (
                 actor_loss

@@ -76,11 +76,10 @@ class FlowMILEConfig(BaseAlgorithmConfig):
     reference_relative_score: bool = True
 
     # ----- Anchor regularizer (fine-tuning stability) -----
-    # Coefficient for matching the online velocity field to the frozen rollout velocity field on the
-    # buffer's stored non-intervention (label-0) actions. 0 disables the anchor loss.
+    # Coefficient for matching the online velocity field to the frozen rollout velocity field on
+    # actions sampled from the rollout policy. 0 disables the anchor loss.
     anchor_loss_weight: float = 0.0
-    # Flow-matching (t, x0) noise draws averaged per anchor action to estimate the anchor loss;
-    # must be >= 1.
+    # Rollout-policy action samples used to estimate the anchor loss; must be >= 1.
     anchor_monte_carlo_samples: int = 1
 
     # ----- Proximal score regularizer (score-magnitude stability) -----
