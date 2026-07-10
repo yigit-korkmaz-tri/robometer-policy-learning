@@ -846,6 +846,7 @@ class BaseReplayBuffer(abc.ABC):
     def sample(
         self,
         batch_size: int,
+        sampler: Optional["BaseSampler"] = None,
         device: str = None,
         dtype=None,
         **kwargs,
@@ -856,12 +857,13 @@ class BaseReplayBuffer(abc.ABC):
 
         Args:
             batch_size: Number of transitions to sample
+            sampler: Optional sampler override for this call
             convert_to_tensors: Whether to convert numpy arrays to PyTorch tensors
             device: Device to move tensors to (e.g., 'cuda', 'cpu')
             dtype: Data type for tensors (default: torch.float32)
             **kwargs: Additional sampling parameters
         """
-        active_sampler = self.sampler
+        active_sampler = sampler or self.sampler
         sampled = active_sampler.sample(self, batch_size, **kwargs)
 
         # Apply post-transforms (prefer batched transforms for efficiency)

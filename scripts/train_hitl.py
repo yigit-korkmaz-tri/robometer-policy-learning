@@ -318,7 +318,7 @@ def main(cfg: DictConfig):
     logger.info(f"Loaded pretrained actor {type(actor).__name__} from {actor_path}")
     if alg_name in ("diffusion_mile", "dp"):
         assert isinstance(actor, DiffusionActor), f"alg '{alg_name}' requires a DiffusionActor (DP-pretrained)"
-    elif alg_name == "flow_mile":
+    elif alg_name in ("flow_mile", "flow"):
         assert isinstance(actor, FlowMatchingActor), f"alg '{alg_name}' requires a FlowMatchingActor (Flow-Matching-pretrained)"
     elif alg_name in ("mile", "bc"):
         assert not isinstance(actor, (DiffusionActor, FlowMatchingActor)), f"alg '{alg_name}' requires a Gaussian actor"
