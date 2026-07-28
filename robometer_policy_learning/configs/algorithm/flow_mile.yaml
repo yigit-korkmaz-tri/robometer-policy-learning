@@ -19,6 +19,7 @@ clip_grad_norm: 1.0  # <= 0 disables gradient clipping
 lambda_intervention: 1.0               # convex weight of the probit BCE loss
 intervention_cost: 0.0                 # probit threshold offset c
 probit_scale: 1.0                      # probit scale beta
+expected_rollout_score_weight: 1.0     # weight on the rollout baseline in the probit difference
 monte_carlo_samples: 10                # K samples for the marginal probit MC estimate
 mc_num_inference_steps: 10             # number of Euler steps for the Monte-Carlo action sampling
 condition_intervention_on_action: false  # use the observed human action a_h on intervention steps
@@ -27,6 +28,12 @@ condition_nonintervention_on_robot: false  # baseline = logged robot action's sc
 # Flow-MILE specific (flow-matching-loss log-prob proxy)
 score_monte_carlo_samples: 1           # flow-matching (t, x0) samples used to estimate ell(a, s)
 reference_relative_score: true        # use loss_0 - loss_theta instead of -loss_theta (needs rollout policy)
+
+# Collection-time rollout samples for the probit baseline (iterative-setting fix): store a pool of
+# rollout chunks per state at its collection round, randomly subsample instead of sampling the
+# current rollout policy (which has drifted toward past human corrections). Online buffer only.
+use_stored_rollout_samples: false     # true => use stored collection-time samples for the probit baseline
+stored_rollout_pool_size: 50          # pool N stored per state; draw monte_carlo_samples of them each step
 
 # Regularizers (fine-tuning stability against the frozen rollout velocity field)
 proximal_loss_weight: 0.0                # 0 disables the proximal loss

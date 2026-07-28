@@ -54,6 +54,10 @@ class FlowMILEConfig(BaseAlgorithmConfig):
     intervention_cost: float = 0.0
     # Probit scale 'beta'
     probit_scale: float = 1.0
+    # Weight applied to the expected rollout-policy score E_{a0~pi0} ell(a0,s) in the probit
+    # difference (both the MILE marginal gap and the observed-action gap). 1.0 recovers the standard
+    # MILE difference; larger values downweight the rollout baseline relative to the policy/human score.
+    expected_rollout_score_weight: float = 1.0
     # Monte-Carlo samples K used to estimate the probit intervention probability.
     monte_carlo_samples: int = 50
     # Euler ODE steps for the Monte-Carlo action sampling (probit baseline / MILE marginal / anchor
@@ -74,6 +78,24 @@ class FlowMILEConfig(BaseAlgorithmConfig):
     # If True, use the reference-relative score ell_{theta,0} = loss_0 - loss_theta (online vs.
     # frozen rollout policy) instead of the plain score -loss_theta. Requires a rollout_policy.
     reference_relative_score: bool = True
+
+    # ----- Collection-time (offline) rollout samples for the probit baseline -----
+    # When True, the rollout-policy samples used for the probit baseline E_{a0~pi0} ell(a0,s) are NOT
+    # drawn fresh from the current frozen rollout policy every step. Instead a pool of action chunks
+    # is precomputed once per transition, at the time that transition is collected (see
+    # FlowMILE.precompute_rollout_samples, called from the HITL loop right after set_rollout_policy),
+    # stored on the transition's info dict, and randomly subsampled each step. In the iterative HITL
+    # setting this pins each state's negative samples to the policy that actually collected it: a
+    # round-1 intervention state keeps round-1 rollout samples even when trained in round 3, instead
+    # of being compared against a round-3 policy already trained (rounds 1-2) to imitate its recorded
+    # human correction (which would collapse the MILE gap). Only the online buffer is precomputed;
+    # transitions without a stored pool (e.g. offline anchor demos) fall back to fresh current-policy
+    # samples for that row. Off => original behaviour (always sample fresh from the rollout policy).
+    use_stored_rollout_samples: bool = False
+    # Number of rollout-action chunks stored per transition (the pool N). Each training step randomly
+    # draws monte_carlo_samples of them per state, so N should be >= monte_carlo_samples to restore
+    # per-step baseline randomness. Memory cost is ~ N * horizon * action_dim floats per transition.
+    stored_rollout_pool_size: int = 50
 
     # ----- Anchor regularizer (fine-tuning stability) -----
     # Coefficient for matching the online velocity field to the frozen rollout velocity field on

@@ -5,7 +5,7 @@
 # sections. The env / training / model / policy config is read at runtime from the pretraining run's
 # saved Hydra config (load_dir/.hydra/config.yaml) so it always matches the loaded model.
 defaults:
-  - algorithm@offline_algorithm: diffusion_mile   # HITL training-algorithm hyperparameters.
+  - algorithm@offline_algorithm: flow_mile   # HITL training-algorithm hyperparameters.
                                          #   HG-DAgger:        bc
                                          #   diffusion MILE:   diffusion_mile (needs a DP-pretrained DiffusionActor)
   - _self_
@@ -15,13 +15,13 @@ debug: false
 # Pretrained policy to start from. load_dir is a pretraining run OUTPUT DIRECTORY containing
 # `.hydra/config.yaml` (env/training/model/policy are read from there) and
 # `checkpoints/<step>/actor.pt`. `checkpoint` selects which <step> (null = latest available).
-load_dir: checkpoints/square_low_dim/2026-06-11_16-17-39
-checkpoint: 20000
+load_dir: checkpoints/square_low_dim/2026-06-22_15-58-08
+checkpoint: 10000
 
 # HITL training algorithm selector (mile | bc | diffusion_mile). Must match the
 # algorithm@offline_algorithm default above. bc + hitl.store_only_human=true => HG-DAgger.
 alg:
-  offline_alg_name: diffusion_mile
+  offline_alg_name: flow_mile
 
 # Iterative human-in-the-loop loop
 #   MILE:            alg.offline_alg_name=mile             hitl.store_only_human=false  (store all transitions)

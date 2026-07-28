@@ -128,6 +128,7 @@ def parse_args():
     parser.add_argument("--dataset-path", default=None, help="Override the H5 dataset path used to build the env.")
     parser.add_argument("--record-video", action="store_true", help="Record one episode to evaluation_videos/ (no wandb).")
     parser.add_argument("--n-action-steps", type=int, default=None, help="Number of action steps to execute (default: None = use training.n_action_steps).")
+    parser.add_argument("--max-episode-steps", type=int, default=None, help="Maximum episode steps (default: None = use env.max_episode_steps).")
     parser.add_argument("--num-envs", type=int, default=1, help="Parallel eval envs. >1 batches episodes via BatchEvaluationWorker; 1 = serial.")
     parser.add_argument("--vectorization", choices=["sync", "async"], default="sync",
                         help="Vectorization backend for --num-envs>1: 'async' (subprocess per env, concurrent sims) or 'sync' (in-process). Async is incompatible with Mode A DINO envs.")
@@ -193,12 +194,16 @@ def main():
     # ---- Evaluation env: chunked open-loop execution, matching train_hitl's eval_env. The DINO /
     # sentence encoders are attached inside setup_robomimic_env when provided (Mode A). ----
     num_envs = max(1, int(args.num_envs))
+    if args.max_episode_steps is not None:
+        max_episode_steps = args.max_episode_steps
+    else:
+        max_episode_steps = int(pre_cfg.env.max_episode_steps)
     eval_env, _ = setup_robomimic_env(
         dataset_path=dataset_path,
         n_envs=num_envs,
         device=device,
         seed=args.seed,
-        max_episode_steps=pre_cfg.env.max_episode_steps,
+        max_episode_steps=max_episode_steps,
         use_full_state=pre_cfg.env.use_full_state,
         terminate_on_success=True,
         chunk_size=chunk_size,
@@ -243,7 +248,7 @@ def main():
             record_video=args.record_video,
             logger=None,
             lowdim_obs_stats=lowdim_stats,
-            max_episode_steps=int(pre_cfg.env.max_episode_steps),
+            max_episode_steps=max_episode_steps,
         )
     else:
         eval_worker = EvaluationWorker(

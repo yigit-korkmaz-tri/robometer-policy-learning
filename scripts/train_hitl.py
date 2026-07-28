@@ -705,6 +705,16 @@ def main(cfg: DictConfig):
     # Async needs a picklable env (raw-image Mode B or low-dim; NOT DINO-embedding Mode A). ----
     eval_num_envs = int(OmegaConf.select(cfg, "eval.eval_num_envs", default=10))
     eval_vectorization = str(OmegaConf.select(cfg, "eval.eval_vectorization", default="sync")).lower()
+    if (
+        not precollected_hitl_dataset
+        and human_mode == "real"
+        and eval_vectorization == "async"
+    ):
+        logger.warning(
+            "eval.eval_vectorization='async' is incompatible with on-screen real-teleop rendering. "
+            "Forcing eval_vectorization='sync'."
+        )
+        eval_vectorization = "sync"
     eval_env, _ = setup_robomimic_env(
         dataset_path=cfg.env.h5_dataset_path,
         n_envs=eval_num_envs,
@@ -785,6 +795,8 @@ def main(cfg: DictConfig):
 
         for it in range(num_iterations):
             logger.info(f"===== HiTL iteration {it + 1}/{num_iterations} ({alg_name}) =====")
+            if human_mode == "real":
+                input("Press Enter to begin rollout collection for this iteration...")   
             # keep_best: revert to the PREVIOUS iteration's best before starting this iteration, so
             # collection + training build on that iteration's peak rather than its drifted end state.
             if keep_best and it > 0:
@@ -821,7 +833,8 @@ def main(cfg: DictConfig):
                     num_kept += int(stored > 0)
                     logger.info(
                         f"  kept {num_kept}/{rollouts_per_iter} rollouts "
-                        f"(attempt {attempt}, success={bool(success)}, stored={stored})"
+                        f"(attempt {attempt}, success={bool(success)}, stored={stored}, "
+                        f"successful attempt rate: {num_success / attempt:.2f})"
                     )
                 wandb_logger.log(
                     {
@@ -868,20 +881,31 @@ def main(cfg: DictConfig):
             # --- 2) Train (rollout_policy = frozen snapshot of the data-collection policy, for MILE) ---
             if needs_rollout_policy:
                 algo.set_rollout_policy(copy.deepcopy(algo.actor))
+                # FlowMILE with use_stored_rollout_samples: freeze each newly-collected state's probit
+                # baseline pool to THIS round's collection policy (just snapshotted above). Existing
+                # transitions keep the pool written the round they were collected, so a round-1
+                # intervention state is never scored against a later policy already trained to imitate
+                # its human action. Online buffer only (offline anchors fall back to fresh samples for
+                # their discarded probit rows). No-op with clear_buffer_each_iter=true (buffer is fresh).
+                if getattr(algo, "use_stored_rollout_samples", False) and hasattr(algo, "precompute_rollout_samples"):
+                    n_written = algo.precompute_rollout_samples(online_buffer)
+                    logger.info(
+                        f"FlowMILE: stored rollout samples for {n_written} new transitions "
+                        f"(from iteration {it + 1}'s collection policy)."
+                    )
             buffer_size = len(train_buffer)
             batch_size = int(OmegaConf.select(cfg, "offline_algorithm.batch_size", default=256))
             steps_per_epoch = max(1, -(-buffer_size // batch_size))  # ceil(buffer_size / batch_size)
-            eval_freq_steps = OmegaConf.select(cfg, "eval.eval_freq", default=None)
+            eval_freq_steps = OmegaConf.select(cfg, "eval.eval_freq", default=train_steps_per_iter)
             logger.info(
                 f"Training {train_steps_per_iter} steps this iteration; "
                 f"eval every {eval_freq_steps} steps. "
                 f"1 epoch is {steps_per_epoch} steps with the current dataset "
-                f"(ceil({buffer_size}/{batch_size}))."
             )
             for i in tqdm(range(train_steps_per_iter), desc="Training", unit="step"):
                 algo.train_step(logging_prefix="train")  # logs internally at algo.step_counter
                 # --- 3) Autonomous (no-human) evaluation ---
-                if eval_freq_steps and (i + 1) % eval_freq_steps == 0:
+                if (i + 1) % eval_freq_steps == 0:
                     eval_metrics = eval_worker.run(algo.actor)
                     wandb_logger.log(eval_metrics, step=algo.step_counter, prefix="eval")
                     _maybe_save_best(eval_metrics, it=it+1)

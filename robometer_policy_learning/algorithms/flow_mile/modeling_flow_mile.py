@@ -141,6 +141,7 @@ class FlowMILE(BaseAlgorithm):
         self.score_monte_carlo_samples = int(config.score_monte_carlo_samples)
         self.intervention_cost = float(config.intervention_cost)
         self.probit_scale = float(config.probit_scale)
+        self.expected_rollout_score_weight = float(config.expected_rollout_score_weight)
         self.lambda_intervention = float(config.lambda_intervention)
         self.condition_intervention_on_action = bool(
             config.condition_intervention_on_action
@@ -149,6 +150,15 @@ class FlowMILE(BaseAlgorithm):
             config.condition_nonintervention_on_robot
         )
         self.reference_relative_score = bool(config.reference_relative_score)
+        # Collection-time rollout-sample pool for the probit baseline (see config + precompute_rollout_samples).
+        # When enabled, each state's baseline negatives are drawn from a frozen pool stored on the
+        # transition's info dict (under self.stored_rollout_key) at its collection round, rather than
+        # sampled fresh from the current (drifted) rollout policy every step.
+        self.use_stored_rollout_samples = bool(config.use_stored_rollout_samples)
+        self.stored_rollout_pool_size = int(config.stored_rollout_pool_size)
+        self.stored_rollout_key = "rollout_samples"
+        # Fraction of the last batch's probit baseline that used stored (vs fresh fallback) samples.
+        self._last_stored_sample_frac = float("nan")
         self.anchor_loss_weight = float(config.anchor_loss_weight)
         self.anchor_monte_carlo_samples = int(config.anchor_monte_carlo_samples)
         self.proximal_loss_weight = float(config.proximal_loss_weight)
@@ -186,11 +196,15 @@ class FlowMILE(BaseAlgorithm):
         print(f"FlowMILE: mc_num_inference_steps={self.mc_num_inference_steps} (None => actor default)")
         print(f"FlowMILE: score_monte_carlo_samples={self.score_monte_carlo_samples}")
         print(f"FlowMILE: probit_scale={self.probit_scale}")
+        print(f"FlowMILE: expected_rollout_score_weight={self.expected_rollout_score_weight}")
         print(f"FlowMILE: intervention_cost={self.intervention_cost}")
         print(f"FlowMILE: lambda_intervention={self.lambda_intervention}")
         print(f"FlowMILE: condition_intervention_on_action={self.condition_intervention_on_action}")
         print(f"FlowMILE: condition_nonintervention_on_robot={self.condition_nonintervention_on_robot}")
         print(f"FlowMILE: reference_relative_score={self.reference_relative_score}")
+        print(f"FlowMILE: use_stored_rollout_samples={self.use_stored_rollout_samples}")
+        if self.use_stored_rollout_samples:
+            print(f"FlowMILE: stored_rollout_pool_size={self.stored_rollout_pool_size}")
         print(f"FlowMILE: anchor_loss_weight={self.anchor_loss_weight}")
         print(f"FlowMILE: anchor_monte_carlo_samples={self.anchor_monte_carlo_samples}")
         print(f"FlowMILE: proximal_loss_weight={self.proximal_loss_weight}")
@@ -258,6 +272,88 @@ class FlowMILE(BaseAlgorithm):
         self.rollout_policy.eval()
         for param in self.rollout_policy.parameters():
             param.requires_grad_(False)
+
+    @torch.no_grad()
+    def precompute_rollout_samples(self, buffer, batch_size: int = 128) -> int:
+        """Store a frozen pool of rollout-policy action chunks on transitions that lack one.
+
+        For each transition in ``buffer`` WITHOUT ``self.stored_rollout_key`` in its info dict, draws
+        ``stored_rollout_pool_size`` action chunks from the CURRENT rollout policy for that
+        transition's observation and writes them (normalized action space, ``[N, H, A]`` float32) to
+        ``transition.info[self.stored_rollout_key]``. Transitions that already carry a pool are
+        skipped, so in the iterative HITL loop each state keeps the samples written the round it was
+        collected: calling this right after ``set_rollout_policy`` (which snapshots the round's
+        collection policy) pins every state's probit-baseline negatives to the policy that produced
+        it, rather than to a later policy already trained to imitate the recorded human corrections.
+
+        The stored obs is already in the policy's space (the collector normalizes low-dim keys before
+        storing), and ``_sample_policy_actions`` returns normalized chunks, so the stored samples are
+        directly consumable by ``_score_stacked_actions`` with no renormalization. Obs are batched via
+        the buffer's own collation so they match the training-time ``batch['obs']`` exactly.
+
+        Returns the number of transitions newly populated.
+        """
+        if self.rollout_policy is None:
+            raise RuntimeError(
+                "precompute_rollout_samples requires a frozen rollout_policy. Call set_rollout_policy() first."
+            )
+        key = self.stored_rollout_key
+        transitions = [t for t in buffer.get_all_transitions() if t is not None]
+        pending = [t for t in transitions if not (t.info is not None and key in t.info)]
+        if not pending:
+            return 0
+
+        n_pool = self.stored_rollout_pool_size
+        written = 0
+        for start in range(0, len(pending), batch_size):
+            mini = pending[start : start + batch_size]
+            # Reuse the buffer's own collation so obs matches the training-time batch exactly.
+            batched = buffer._convert_batch_to_tensors(buffer._batch_transitions(mini), device=self.device)
+            obs = batched["obs"]
+            pool = self._sample_policy_actions(self.rollout_policy, obs, n_pool)  # [N, b, H, A]
+            # -> [b, N, H, A] on CPU so the stored copies do not pin GPU memory.
+            pool = pool.permute(1, 0, 2, 3).contiguous().to("cpu", torch.float32).numpy()
+            for t, p in zip(mini, pool):
+                if t.info is None:
+                    t.info = {}
+                t.info[key] = p
+                written += 1
+        return written
+
+    def _apply_stored_rollout_samples(
+        self, fresh_samples: torch.Tensor, batch: dict
+    ) -> torch.Tensor:
+        """Substitute stored collection-time samples into the fresh rollout-sample tensor.
+
+        ``fresh_samples`` ``[K, B, H, A]`` are the current-policy chunks drawn in ``train_step``. For
+        each batch row whose sampled transition carries a stored pool (written by
+        :meth:`precompute_rollout_samples`), randomly draw ``K`` chunks from that ``[N, H, A]`` pool
+        (without replacement when ``N >= K``, else with replacement) and overwrite that row; rows
+        without a pool (e.g. offline anchor demos) keep the fresh current-policy samples. Records the
+        substituted fraction for logging. Returns a new ``[K, B, H, A]`` tensor.
+        """
+        info = batch.get("info")
+        K, B = fresh_samples.shape[0], fresh_samples.shape[1]
+        if not isinstance(info, (list, tuple)) or len(info) != B:
+            self._last_stored_sample_frac = 0.0
+            return fresh_samples
+
+        out = fresh_samples.clone()
+        key = self.stored_rollout_key
+        substituted = 0
+        for b, d in enumerate(info):
+            if not (isinstance(d, dict) and key in d):
+                continue
+            pool = torch.as_tensor(np.asarray(d[key], dtype=np.float32), device=self.device)  # [N, H, A]
+            n_pool = pool.shape[0]
+            if n_pool >= K:
+                idx = torch.randperm(n_pool, device=self.device)[:K]  # K distinct draws
+            else:
+                idx = torch.randint(n_pool, (K,), device=self.device)  # with replacement
+            out[:, b] = pool[idx]
+            substituted += 1
+        self._last_stored_sample_frac = substituted / B if B else float("nan")
+        return out
 
     def _prepare_actions(self, actions: torch.Tensor) -> torch.Tensor:
         """Coerce buffer actions into ``(B, horizon, action_dim)``."""
@@ -569,7 +665,7 @@ class FlowMILE(BaseAlgorithm):
         if compute_proximal:
             proximal_terms["training"] = proximal_score_loss(training_scores)
 
-        probit_diff_marginal = training_scores - expected_rollout_score.unsqueeze(0)  # [K, B]
+        probit_diff_marginal = training_scores - self.expected_rollout_score_weight * expected_rollout_score.unsqueeze(0)  # [K, B]
 
         # Optionally standardize the score gap by its EMA running mean/std before the probit, so
         # probit_scale / intervention_cost are decoupled from the absolute (drifting) scale of the
@@ -609,7 +705,7 @@ class FlowMILE(BaseAlgorithm):
                 # the observed gap) so both probit arguments live on the same scale.
                 # observed_gap = observed_scores - expected_rollout_score.detach()
                 # normalized_observed_gap = self._normalize_score_gap(observed_gap)                
-                normalized_observed_gap = self._normalize_score_gap(observed_scores - expected_rollout_score)
+                normalized_observed_gap = self._normalize_score_gap(observed_scores - self.expected_rollout_score_weight * expected_rollout_score)
                 probit_arg_observed = self.probit_scale * normalized_observed_gap - self.intervention_cost
                 observed_probs = normal_cdf(probit_arg_observed)
                 intervention_probs = intervention_probs.clone()
@@ -685,6 +781,9 @@ class FlowMILE(BaseAlgorithm):
         # intervention rate, it is just predicting the prior and provides no per-state signal.
         iprob_policy_means = []  # mean p(nu=1|s) on label-0 (autonomous/policy) states
         iprob_human_means = []   # mean p(nu=1|s) on label-1 (human-correction) states
+        # Fraction of the probit baseline that used stored collection-time pools (vs fresh fallback);
+        # only meaningful when use_stored_rollout_samples=True.
+        stored_sample_fracs = []
 
         gradient_steps = int(self.config.num_updates_per_train_step)
 
@@ -716,17 +815,26 @@ class FlowMILE(BaseAlgorithm):
                 if action_mask.any():
                     actions[action_mask] = actions[action_mask] + torch.randn_like(actions[action_mask]) * self.config.action_noise_std
 
-            # Sample frozen rollout-policy chunks ONCE this step; reused by the probit baseline, the
-            # anchor loss, and the rollout-score diagnostic.
+            # Sample frozen rollout-policy chunks ONCE this step; reused by the anchor loss and the
+            # rollout-score diagnostic (and, unless stored samples are used, the probit baseline).
             rollout_samples = self._sample_policy_actions(
                 self.rollout_policy, obs, self.monte_carlo_samples
             )  # [K, B, H, A]
+
+            # Probit baseline samples: with use_stored_rollout_samples, substitute each row's stored
+            # collection-time pool (randomly subsampled) for the rows that carry one; otherwise use
+            # the fresh current-policy samples. The fresh samples are still used below for the anchor
+            # loss and the rollout-score diagnostic regardless.
+            if self.use_stored_rollout_samples:
+                probit_rollout_samples = self._apply_stored_rollout_samples(rollout_samples, batch)
+            else:
+                probit_rollout_samples = rollout_samples
 
             intervention_probs = self._compute_intervention_probs(
                 obs=obs,
                 actions=actions,
                 interventions=interventions,
-                rollout_samples=rollout_samples,
+                rollout_samples=probit_rollout_samples,
             ).view_as(interventions)
             if self._last_probit_diagnostics:
                 probit_diagnostics.append(self._last_probit_diagnostics)
@@ -788,6 +896,8 @@ class FlowMILE(BaseAlgorithm):
             iprob = intervention_probs.detach()
             iprob_policy_means.append(iprob[policy_mask].mean().item() if policy_mask.any() else np.nan)
             iprob_human_means.append(iprob[human_mask].mean().item() if human_mask.any() else np.nan)
+            if self.use_stored_rollout_samples:
+                stored_sample_fracs.append(self._last_stored_sample_frac)
 
             if action_mask.any():
                 expert_action_means.append(actions[action_mask].mean().item())
@@ -865,6 +975,10 @@ class FlowMILE(BaseAlgorithm):
             # condition_nonintervention_on_robot=True (NaN otherwise / when no label-0 in the batch).
             "nonintervention_robot_score_mean": float(np.nanmean(nonintervention_robot_score_means)) if np.any(~np.isnan(nonintervention_robot_score_means)) else float("nan"),
         }
+        # Fraction of the probit baseline that used stored collection-time pools (only when the option
+        # is on). ~1.0 on online-only batches; < 1.0 when offline-anchor rows fall back to fresh samples.
+        if stored_sample_fracs and np.any(~np.isnan(stored_sample_fracs)):
+            metrics_dict["stored_rollout_sample_frac"] = float(np.nanmean(stored_sample_fracs))
         # Score diagnostics are computed only on logging steps (log_score_metrics_every), so add them
         # only when collected this train_step; otherwise they are simply skipped for this log.
         if score_human_means:
