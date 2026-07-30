@@ -282,10 +282,14 @@ def get_intervention_criteria(name, intervention_hold: int = 1, **kwargs):
 class HitlRolloutWorker:
     """Runs HITL rollouts (and autonomous eval) on a single robomimic env.
 
-    Two intervention sources are supported during collection (``allow_human=True``):
-      * keyboard teleop (default): the human toggles control with the takeover key;
+    Three intervention sources are supported during collection (``allow_human=True``):
+      * keyboard/spacemouse teleop (default): the human toggles control with the takeover key and
+        supplies the actions with the device;
       * simulated human: pass ``expert_policy`` + ``intervention_criteria`` and a criterion decides
-        per step whether the expert overrides the rollout policy (no keyboard needed).
+        per step whether the expert overrides the rollout policy (no keyboard needed);
+      * expert-toggle ("toggle" mode): pass ``expert_policy`` + ``expert_teleop=True`` (no criterion).
+        A real human presses the takeover key to decide WHEN to intervene, but the frozen expert
+        policy — not a teleop device — supplies the actions while it is in control.
 
     Manages receding-horizon chunk execution, normalizes/filters observations for both ``act()``
     and storage, optionally renders the agent view(s) to a cv2 window, and (when ``store``) buffers
@@ -310,6 +314,7 @@ class HitlRolloutWorker:
         segment_by_intervention: bool = False,
         expert_policy=None,
         intervention_criteria=None,
+        expert_teleop: bool = False,
         intervention_hold: int = 1,
         sim_execution_horizon: Optional[int] = None,
         enable_render: bool = True,
@@ -359,6 +364,18 @@ class HitlRolloutWorker:
         if self.expert_policy is not None:
             self.expert_policy.eval()
 
+        # Expert-toggle ("toggle") mode: a real human presses the takeover key to decide WHEN the
+        # expert takes over / releases, but the frozen ``expert_policy`` (not a keyboard/spacemouse
+        # device) supplies the actions while it is in control. No movement device is opened — only the
+        # takeover toggle. Mutually exclusive with simulated mode (which owns intervention timing via
+        # its criterion).
+        self.expert_teleop = bool(expert_teleop)
+        if self.expert_teleop:
+            if self.simulated:
+                raise ValueError("expert_teleop=True is incompatible with intervention_criteria (simulated mode).")
+            if self.expert_policy is None:
+                raise ValueError("expert_teleop=True requires an expert_policy (the frozen policy that acts on takeover).")
+
         # Intervention-hold: once the criterion triggers, the expert stays in control for this many
         # total steps (trigger + hold-1 follow-ups) before the (possibly expensive) criterion is
         # re-evaluated. The worker owns the hold so it can skip work the criterion would discard:
@@ -381,7 +398,7 @@ class HitlRolloutWorker:
         # onto the current eef pose and re-emitted as an absolute target (see _delta_to_absolute_action),
         # otherwise the controller reads each tiny delta as an absolute Cartesian goal. Only relevant
         # for keyboard teleop; the simulated expert already outputs env-space actions.
-        self.absolute_pose = (not self.simulated) and not bool(getattr(self.controller, "use_delta", True))
+        self.absolute_pose = (not self.simulated) and (not self.expert_teleop) and not bool(getattr(self.controller, "use_delta", True))
         if self.absolute_pose:
             cname = getattr(self.controller, "name", "")
             if cname not in ("OSC_POSE", "OSC_POSITION") or getattr(self.controller, "impedance_mode", "fixed") != "fixed":
@@ -425,23 +442,32 @@ class HitlRolloutWorker:
         self.toggle = None
         self._input2action = None
         if not self.simulated and self.human_teleop:
-            from robosuite.utils.input_utils import input2action
-
-            if self.teleop_device == "keyboard":
-                from robosuite.devices import Keyboard
-
-                self._device = Keyboard(pos_sensitivity=pos_sensitivity, rot_sensitivity=rot_sensitivity)
-            elif self.teleop_device == "spacemouse":
-                from robosuite.devices import SpaceMouse
-
-                self._device = SpaceMouse(pos_sensitivity=pos_sensitivity, rot_sensitivity=rot_sensitivity)
-            else:
-                raise ValueError(
-                    f"teleop_device must be 'keyboard' or 'spacemouse', got {teleop_device!r}."
+            if self.expert_teleop:
+                # Toggle mode: only the takeover toggle is needed (the expert, not a teleop device,
+                # supplies the actions), so do NOT open a keyboard/spacemouse movement device.
+                self.toggle = TakeoverToggle(takeover_key)
+                logger.info(
+                    f"HITL expert-toggle mode: human toggles takeover with '{takeover_key}'; expert "
+                    f"{type(self.expert_policy).__name__} supplies actions while in control."
                 )
-            self._input2action = input2action
-            self.toggle = TakeoverToggle(takeover_key)
-            logger.info(f"HITL teleop device: {self.teleop_device} (takeover key: '{takeover_key}')")
+            else:
+                from robosuite.utils.input_utils import input2action
+
+                if self.teleop_device == "keyboard":
+                    from robosuite.devices import Keyboard
+
+                    self._device = Keyboard(pos_sensitivity=pos_sensitivity, rot_sensitivity=rot_sensitivity)
+                elif self.teleop_device == "spacemouse":
+                    from robosuite.devices import SpaceMouse
+
+                    self._device = SpaceMouse(pos_sensitivity=pos_sensitivity, rot_sensitivity=rot_sensitivity)
+                else:
+                    raise ValueError(
+                        f"teleop_device must be 'keyboard' or 'spacemouse', got {teleop_device!r}."
+                    )
+                self._input2action = input2action
+                self.toggle = TakeoverToggle(takeover_key)
+                logger.info(f"HITL teleop device: {self.teleop_device} (takeover key: '{takeover_key}')")
 
     def close(self):
         if self.toggle is not None:
@@ -649,11 +675,14 @@ class HitlRolloutWorker:
         env = self.env
         dev, toggle = self._device, self.toggle
         use_criteria = allow_human and self.simulated
-        use_teleop = allow_human and not self.simulated
+        use_expert_toggle = allow_human and self.expert_teleop and not self.simulated
+        use_teleop = allow_human and not self.simulated and not self.expert_teleop
 
         obs = _extract0(env.reset()[0])
         if use_teleop:
             dev.start_control()
+            toggle.reset(active=False)
+        elif use_expert_toggle:
             toggle.reset(active=False)
         if use_criteria and hasattr(self.intervention_criteria, "reset"):
             self.intervention_criteria.reset()  # clear any leftover intervention hold
@@ -730,6 +759,26 @@ class HitlRolloutWorker:
                     else:
                         mode, label = "POLICY", ROLLOUT_LABEL
                         prev_human = False
+
+            elif use_expert_toggle and toggle.active:
+                # Toggle mode: the human decides WHEN to take over (takeover key), but the frozen
+                # expert policy supplies the action while in control. The expert executes its sampled
+                # chunk receding-horizon (up to sim_execution_horizon actions per chunk, then a fresh
+                # chunk is sampled; sim_execution_horizon=1 => closed-loop, resample every step).
+                if not prev_human:
+                    held_expert_chunk, held_expert_pos = None, 0  # fresh expert chunk on takeover
+                    human_seg += 1  # new contiguous human segment
+                    seg_step = 0
+                prev_human = True
+                if held_expert_chunk is None or held_expert_pos >= held_expert_exec_h:
+                    held_expert_chunk = self._expert_chunk(obs_t)
+                    held_expert_exec_h = self._expert_exec_horizon(len(held_expert_chunk))
+                    held_expert_pos = 0
+                action = self._fit_action(held_expert_chunk[held_expert_pos])
+                held_expert_pos += 1
+                chunk_st["chunk"] = None  # force rollout replan once the human releases
+                mode, label = "HUMAN", INTERVENTION_LABEL
+                human_steps += 1
 
             elif use_teleop and toggle.active:
                 if not prev_human:

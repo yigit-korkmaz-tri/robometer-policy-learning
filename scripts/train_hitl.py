@@ -67,11 +67,19 @@ Teleop device is selected by ``teleop.device`` (``keyboard`` or ``spacemouse``);
 needs the ``hidapi`` package and a connected 3D mouse. The takeover toggle stays on the keyboard
 for both devices.
 
+``hitl.human_mode`` selects the intervention source:
+  * "real"      -> a human teleoperates (keyboard/spacemouse) during takeover;
+  * "simulated" -> a frozen expert + an intervention criterion decide takeover automatically (headless);
+  * "toggle"    -> a human presses the takeover key to decide WHEN to intervene, but the frozen
+                   ``hitl.expert_load_dir`` policy (not a teleop device) supplies the actions while in
+                   control. Movement keys / the spacemouse are ignored; no criterion is used.
+
 Controls:
   * Keyboard:   Tab = take/release control, wasd/rf + zx/tg/cv to move, space = gripper,
                 q = abort episode, ESC = quit.
   * SpaceMouse: Tab = take/release control, move/twist the puck to move, left button = gripper,
                 right button = abort episode, ESC = quit.
+  * Toggle:     Tab = take/release control (expert drives while taken over), ESC = quit.
 """
 
 import os
@@ -336,7 +344,7 @@ def main(cfg: DictConfig):
         n_envs=1,
         device=device,
         seed=OmegaConf.select(cfg, "hitl.seed", default=0),
-        max_episode_steps=cfg.env.max_episode_steps,
+        max_episode_steps=cfg.env.max_episode_steps+200,
         use_full_state=cfg.env.use_full_state,
         terminate_on_success=True,
         chunk_size=None,
@@ -450,8 +458,24 @@ def main(cfg: DictConfig):
                     criteria_kwargs[kw] = cast(val)
             intervention_criteria = get_intervention_criteria(criteria_name, **criteria_kwargs)
             logger.info(f"Simulated human: expert={type(expert_policy).__name__} from {expert_path}, criteria='{criteria_name}'")
+        elif human_mode == "toggle":
+            # Toggle mode: a real human presses the takeover key to decide WHEN to intervene, but a
+            # frozen expert policy (not the keyboard/spacemouse) supplies the actions while in
+            # control. No intervention criterion is used (the human owns the takeover timing).
+            expert_dir = OmegaConf.select(cfg, "hitl.expert_load_dir", default=None)
+            if not expert_dir:
+                raise ValueError("hitl.human_mode=toggle requires hitl.expert_load_dir (a pretraining run dir or checkpoint dir for the expert policy).")
+            expert_ckpt_dir = _resolve_checkpoint_dir(expert_dir, OmegaConf.select(cfg, "hitl.expert_checkpoint", default=None))
+            expert_path = os.path.join(expert_ckpt_dir, "actor.pt")
+            if not os.path.exists(expert_path):
+                raise FileNotFoundError(f"actor.pt not found in {expert_path} (toggle-mode expert).")
+            expert_policy = torch.load(expert_path, map_location=device, weights_only=False).to(device)
+            logger.info(
+                f"Toggle mode: human controls takeover timing; expert {type(expert_policy).__name__} "
+                f"from {expert_path} supplies actions while in control."
+            )
         elif human_mode != "real":
-            raise ValueError(f"hitl.human_mode must be 'real' or 'simulated', got {human_mode!r}.")
+            raise ValueError(f"hitl.human_mode must be 'real', 'simulated', or 'toggle', got {human_mode!r}.")
 
     if chunk_size is None:
         sampler = RandomSampler()
@@ -676,6 +700,7 @@ def main(cfg: DictConfig):
             segment_by_intervention=segment_by_intervention,
             expert_policy=expert_policy,
             intervention_criteria=intervention_criteria,
+            expert_teleop=(human_mode == "toggle"),
             intervention_hold=int(OmegaConf.select(cfg, "hitl.criteria_intervention_hold", default=1)),
             sim_execution_horizon=OmegaConf.select(cfg, "hitl.sim_execution_horizon", default=None),
             enable_render=enable_render,
@@ -683,7 +708,7 @@ def main(cfg: DictConfig):
             # Only open the teleop device (e.g. the single SpaceMouse) when a real human will actually
             # teleoperate online. Warmup/expert/simulated collection is autonomous, so a worker built
             # only for that must not grab the device (else concurrent/repeated runs collide on it).
-            human_teleop=(not precollected_hitl_dataset and human_mode == "real"),
+            human_teleop=(not precollected_hitl_dataset and human_mode in ("real", "toggle")),
             takeover_key=str(OmegaConf.select(cfg, "teleop.takeover_key", default="tab")),
             camera=OmegaConf.select(cfg, "teleop.camera", default="agentview"),
             wrist_camera=OmegaConf.select(cfg, "teleop.wrist_camera", default="robot0_eye_in_hand"),
@@ -707,7 +732,7 @@ def main(cfg: DictConfig):
     eval_vectorization = str(OmegaConf.select(cfg, "eval.eval_vectorization", default="sync")).lower()
     if (
         not precollected_hitl_dataset
-        and human_mode == "real"
+        and human_mode in ("real", "toggle")
         and eval_vectorization == "async"
     ):
         logger.warning(
@@ -784,8 +809,8 @@ def main(cfg: DictConfig):
         return reloaded
 
     try:
-        if not precollected_hitl_dataset and expert_policy is not None and human_mode == "simulated":
-            logger.info("Evaluating simulated human before training...")
+        if not precollected_hitl_dataset and expert_policy is not None and human_mode in ("simulated", "toggle"):
+            logger.info("Evaluating expert policy before training...")
             eval_metrics = eval_worker.run(expert_policy)
         if bool(OmegaConf.select(cfg, "eval.eval_on_first_step", default=True)):
             logger.info("Evaluating initial policy before training...")
@@ -795,8 +820,8 @@ def main(cfg: DictConfig):
 
         for it in range(num_iterations):
             logger.info(f"===== HiTL iteration {it + 1}/{num_iterations} ({alg_name}) =====")
-            if human_mode == "real":
-                input("Press Enter to begin rollout collection for this iteration...")   
+            if human_mode in ("real", "toggle"):
+                input("Press Enter to begin rollout collection for this iteration...")
             # keep_best: revert to the PREVIOUS iteration's best before starting this iteration, so
             # collection + training build on that iteration's peak rather than its drifted end state.
             if keep_best and it > 0:

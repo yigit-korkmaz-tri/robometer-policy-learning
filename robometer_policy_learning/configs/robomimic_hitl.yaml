@@ -63,14 +63,19 @@ hitl:
   self_num_rollouts: 10
   offline_sample_ratio: 0.5   # fraction of each batch from the offline buffer; null = live size ratio
   # Intervention source.
-  human_mode: simulated   # real (teleop) | simulated (expert policy + criterion)
-  expert_load_dir: checkpoints/square_low_dim/2026-06-11_16-17-39   # [simulated] pretraining run dir (or checkpoint dir) for the expert policy
-  expert_checkpoint: 50000   # [simulated] which checkpoint <step> for the expert (null = latest)
+  #   real      => human teleoperates (keyboard/spacemouse) during takeover
+  #   simulated => expert policy + intervention criterion decide takeover automatically (headless)
+  #   toggle    => human presses the takeover key to decide when to intervene, but the expert policy
+  #                supplies the actions while in control. Uses sim_execution_horizon for
+  #                the expert's receding-horizon chunk execution during takeover.
+  human_mode: simulated   # real (teleop) | simulated (expert + criterion) | toggle (human toggles, expert acts)
+  expert_load_dir: checkpoints/square_low_dim/2026-06-22_15-58-08   # [simulated/toggle] pretraining run dir (or checkpoint dir) for the expert policy
+  expert_checkpoint: best   # [simulated/toggle] which checkpoint <step> for the expert (null = latest)
   # [simulated] criterion: mile | mile_window (Gaussian log-prob) | diffusion_mile |
   # diffusion_mile_paired | diffusion_mile_window (DiffusionActor denoising-score).
   intervention_criteria: diffusion_mile_paired
   criteria_intervention_hold: 10   # [simulated] steps the expert stays in control after a trigger (1 = per-step)
-  # [simulated] during a hold the expert executes its sampled chunk OPEN-LOOP (receding-horizon):
+  # [simulated/toggle] during a hold/takeover the expert executes its sampled chunk OPEN-LOOP (receding-horizon):
   # number of actions to take from each sampled expert chunk before resampling a fresh chunk (must
   # be <= chunk horizon). null => execute the whole chunk before resampling (a hold longer than the
   # chunk resamples at the chunk end); 1 => resample every step (closed-loop, most reactive).
