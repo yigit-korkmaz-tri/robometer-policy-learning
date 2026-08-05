@@ -53,7 +53,7 @@ from hydra import main as hydra_main
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 
-from robometer.utils.logger import get_logger, setup_loguru_logging
+from robometer_policy_learning.utils.logging_compat import get_logger, setup_loguru_logging
 from robometer_policy_learning.algorithms.dp.modeling_dp import DiffusionActor
 from robometer_policy_learning.algorithms.flow_matching.modeling_flow import FlowMatchingActor
 from robometer_policy_learning.buffers.h5_replay_buffer import H5ReplayBuffer

@@ -49,7 +49,7 @@ from collect_hitl_rollout import (  # noqa: E402
     _write_h5,
 )
 
-from robometer.utils.logger import get_logger, setup_loguru_logging  # noqa: E402
+from robometer_policy_learning.utils.logging_compat import get_logger, setup_loguru_logging  # noqa: E402
 from robometer_policy_learning.buffers.h5_replay_buffer import H5ReplayBuffer  # noqa: E402
 from robometer_policy_learning.buffers.replay_buffer import ReplayBuffer  # noqa: E402
 from robometer_policy_learning.buffers.samplers import RandomSampler  # noqa: E402

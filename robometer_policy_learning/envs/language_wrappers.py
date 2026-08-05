@@ -4,7 +4,7 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 
 from .metaworld_utils import TASK_TO_LANG
-from robometer.utils.embedding_utils import compute_text_embeddings
+from robometer_policy_learning.utils.robometer_compat import compute_text_embeddings
 
 
 class LanguageInstructionWrapper(gym.ObservationWrapper):

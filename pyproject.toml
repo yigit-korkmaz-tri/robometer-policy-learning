@@ -43,16 +43,17 @@ dependencies = [
     "pillow>=9.0.0",
     "opencv-python-headless>=4.8.0",
     "imageio>=2.37.0",
-    "unsloth==2025.10.11",
-    "unsloth-zoo==2025.10.12",
-    "xformers==0.0.32.post2",
-    "trl==0.20.0",
-    "robometer",
+    # Used directly by rollouts/dsrl_evaluation_worker.py and required by LIBERO
+    # (libero/libero/envs/env_wrapper.py imports matplotlib.cm). Previously satisfied only
+    # transitively via the unsloth/robometer stack, so it must be declared explicitly.
+    "matplotlib>=3.7",
+    # NOTE: unsloth / unsloth-zoo / xformers / trl live in the `robometer` extra, not here: they are
+    # only used by the reward-model path (RoboReward inference in the reward-relabel server) and
+    # xformers==0.0.32.post2 forces torch==2.8.0, which is incompatible with openpi's torch==2.7.1.
     "grpcio-tools>=1.76",
     "hydra-core==1.3.2",
     "cmake<4.0",
-    # LIBERO dependencies
-    "libero",
+    # LIBERO dependencies (the LIBERO checkout itself is the `libero` extra -- see below)
     "easydict==1.9",
     "robomimic==0.2.0",
     "thop==0.1.1.post2209072238",
@@ -60,8 +61,7 @@ dependencies = [
     "bddl==1.0.1",
     "future==0.18.2",
     "cloudpickle==2.1.0",
-    # OpenPI (Pi0)
-    "openpi",
+    # OpenPI (Pi0) -- the openpi checkout itself is the `openpi` extra (see below)
     "diffusers>=0.38.0",
     "pynput>=1.8.2",
     "hidapi>=0.15.0",
@@ -89,11 +89,40 @@ dev = [
     "pygame>=2.1.0",
 ]
 
-# Paths match git submodules (see .gitmodules). The PyPI name "openpi" is installed from the dsrl_openpi checkout.
+# ----------------------------------------------------------------------------------
+# Git-submodule checkouts under third_party/ (see .gitmodules), as DEPENDENCY GROUPS
+# rather than hard dependencies, so an environment installs only what a given workflow
+# needs. Groups (not extras) on purpose: `[tool.uv] default-groups` makes the pi0/LIBERO
+# set the default for a plain `uv run` / `uv sync`, whereas uv has no `default-extras`
+# setting -- without that, a plain `uv run` would re-sync to a set that drops openpi's
+# torch==2.7.1 pin and silently bump torch to 2.8.0.
+#
+#     uv sync                                          # pi0 / LIBERO (the default)
+#     uv sync --group robometer --no-default-groups     # the reward-model path
+#
+# `robometer` is mutually exclusive with `openpi`: robometer pins datasets==4.1.1 and
+# (via xformers) torch==2.8.0, while openpi pins datasets<4 and torch==2.7.1, so they
+# cannot be resolved together. Declared in [tool.uv] conflicts below, which lets uv lock
+# each combination separately instead of failing the whole lock.
+# ----------------------------------------------------------------------------------
+[dependency-groups]
+libero = ["libero"]
+openpi = ["openpi"]
+# The reward-model path: the robometer checkout plus the LLM-finetuning stack it needs.
+robometer = [
+    "robometer",
+    "unsloth==2025.10.11",
+    "unsloth-zoo==2025.10.12",
+    "xformers==0.0.32.post2",
+    "trl==0.20.0",
+]
+
+# Paths match the git submodules under third_party/ (see .gitmodules). The PyPI name
+# "openpi" is installed from the dsrl_openpi checkout.
 [tool.uv.sources]
-robometer = { path = "./robometer", editable = true }
-libero = { path = "./LIBERO", editable = true }
-openpi = { path = "./dsrl_openpi", editable = true }
+robometer = { path = "./third_party/robometer", editable = true }
+libero = { path = "./third_party/LIBERO", editable = true }
+openpi = { path = "./third_party/dsrl_openpi", editable = true }
 
 # ==================================================================================
 # Build System
@@ -117,6 +146,14 @@ allow-direct-references = true
 
 # Configuration for the 'uv' package manager
 [tool.uv]
+# robometer (datasets==4.1.1) and openpi (datasets<4) cannot co-exist in one resolution.
+# Declaring them as conflicting extras lets uv lock each combination separately instead
+# of failing the whole lock.
+conflicts = [[{ group = "robometer" }, { group = "openpi" }]]
+# The pi0/LIBERO groups are the DEFAULT install set, so a plain `uv run` (as used by
+# scripts/hitl_pi0_loop.py) keeps openpi's torch==2.7.1 pin instead of re-syncing to a set that
+# silently bumps torch to 2.8.0 and churns the CUDA stack.
+default-groups = ["openpi", "libero"]
 extra-build-dependencies = { egl-probe = ["cmake<4.0"] }
 override-dependencies = [
     "transformers>=4.57.0,<5",

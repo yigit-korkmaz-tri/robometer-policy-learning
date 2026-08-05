@@ -67,7 +67,7 @@ from robometer_policy_learning.rollouts.dsrl_rollout_worker import DSRLRolloutWo
 from robometer_policy_learning.rollouts.dsrl_evaluation_worker import DSRLEvaluationWorker
 from robometer_policy_learning.loggers.wandb_logger import WandbLogger
 from robometer.utils.config_utils import display_config, convert_hydra_to_dataclass
-from robometer.utils.logger import setup_loguru_logging
+from robometer_policy_learning.utils.logging_compat import setup_loguru_logging
 from robometer_policy_learning.utils.training_utils import build_actor_critic_models, load_checkpoint, save_checkpoint, create_buffer
 from robometer_policy_learning.configs.register import register_configs
 from robometer_policy_learning.configs.configs import DSRLConfig

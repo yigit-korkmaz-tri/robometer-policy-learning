@@ -1,0 +1,43 @@
+# Multi-task evaluation of a pi0 / pi0.5 policy on LIBERO tasks (scripts/eval_pi0_libero.py).
+#
+# Runs the policy autonomously (plain flow sampling, noise=None) over a list of task ids from ONE
+# LIBERO suite and reports the success rate per task plus the aggregate. Object positions are
+# randomized on each reset (LIBERO placement sampler), so success rate is over varied layouts.
+#
+# Run with:  uv run python scripts/eval_pi0_libero.py --config-name libero_eval \
+#                env.env_name=libero_90 'env.task_ids=[57,58,59]' eval.num_episodes=20
+defaults:
+  - _self_
+
+seed: 0
+
+env:
+  env_name: "libero_90"
+  # List of task ids (from env_name) to evaluate. Override on the CLI, e.g. 'env.task_ids=[0,1,2]'.
+  task_ids: [9, 25, 32, 35, 48, 59, 80]
+  max_episode_steps: 600
+  image_keys: ["observation/image"]
+
+# pi0 / pi0.5 policy to evaluate.
+pi0:
+  checkpoint: "gs://openpi-assets/checkpoints/pi05_libero/"
+  # Set to the LoRA/HITL config (e.g. pi05_libero_hitl_lora) when evaluating a fine-tuned checkpoint
+  # whose architecture is not inferable from the path; null => path heuristic.
+  config_name: null
+  # Actions executed open-loop from each predicted chunk before replanning (receding horizon).
+  action_exec_len: 20
+
+eval:
+  num_episodes: 20          # episodes per task
+  record_video: false       # save a rollout video for the first video_first_n_episodes of each task
+  video_first_n_episodes: 1
+
+logging:
+  log_level: "INFO"
+  # Optional wandb logging of per-task + aggregate success rates.
+  wandb: false
+  wandb_project: "rfm_rl"
+  wandb_entity: "clvr"
+  wandb_name: "eval_pi05_libero"
+  wandb_offline: false
+  wandb_log_dir_base: "logs/wandb"

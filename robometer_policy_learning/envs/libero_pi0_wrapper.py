@@ -13,10 +13,10 @@ from sentence_transformers import SentenceTransformer
 
 import sys, os
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "..", "..", "LIBERO"))
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", "..", "third_party", "LIBERO"))
 from libero.libero.envs import OffScreenRenderEnv
 from robometer_policy_learning.utils.pi0_integration import preprocess_obs_for_pi0
-from robometer.utils.embedding_utils import compute_text_embeddings
+from robometer_policy_learning.utils.robometer_compat import compute_text_embeddings
 
 
 class LiberoPI0Wrapper(gym.Wrapper):

@@ -1,9 +1,13 @@
 [submodule "LIBERO"]
-	path = LIBERO
+	path = third_party/LIBERO
 	url = git@github.com:nakamotoo/LIBERO.git
 [submodule "dsrl_openpi"]
-	path = dsrl_openpi
-	url = git@github.com:jesbu1/dsrl_openpi.git
+	path = third_party/dsrl_openpi
+	# Fork of TRI-ML/dsrl_openpi carrying the LIBERO HITL commits on branch `hitl-work`.
+	# The previous url (jesbu1/dsrl_openpi) does NOT contain the TRI-ML history this repo
+	# now pins, so submodule init would fail against it.
+	url = git@github.com:yigit-korkmaz-tri/dsrl_openpi.git
+	branch = hitl-work
 [submodule "robometer"]
-	path = robometer
+	path = third_party/robometer
 	url = git@github.com:robometer/robometer.git

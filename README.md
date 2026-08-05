@@ -54,7 +54,7 @@ A flexible reinforcement \ imitation learning framework supporting multiple algo
 
 
 
-**Note that this repo assumes robometer is installed as a git submodule and located at `./robometer`. If you made any changes to robometer/have your own robometer fork, replace the submodule** 
+**Note that this repo assumes robometer is installed as a git submodule and located at `./third_party/robometer`. If you made any changes to robometer/have your own robometer fork, replace the submodule** 
 
 ---
 

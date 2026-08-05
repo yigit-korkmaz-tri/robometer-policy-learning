@@ -1,0 +1,54 @@
+# HITL rollout COLLECTION config for scripts/collect_hitl_libero_pi0.py.
+#
+# Runs a pi0 / pi0.5 policy autonomously on a LIBERO task and lets a real human take over with
+# keyboard / SpaceMouse teleoperation, then writes the labelled rollouts (intervention 0=policy,
+# 1=human) to a robomimic-style HDF5 dataset that stores the raw pi0-format observations.
+#
+# Run with:  uv run python scripts/collect_hitl_libero_pi0.py --config-name libero_collect_hitl \
+#                env.task_id=45 teleop.device=keyboard hitl.collect_num_rollouts=50
+defaults:
+  - _self_
+
+debug: false
+seed: 0
+
+# LIBERO task (see robometer_policy_learning/configs/dsrl_libero_config.yaml for suite/task ids).
+env:
+  env_name: "libero_90"
+  task_id: 57
+  max_episode_steps: 1000
+  image_keys: ["observation/image"]
+
+# pi0 / pi0.5 data-collection policy.
+pi0:
+  # A path/URI containing "libero" (and "pi05" for pi0.5) so Pi0Wrapper loads the right openpi config.
+  checkpoint: "gs://openpi-assets/checkpoints/pi05_libero/"
+  # Number of actions executed open-loop from each pi0 chunk before replanning (receding horizon).
+  action_exec_len: 20
+  # Explicit openpi TrainConfig name for loading the model graph. Leave null for base/full checkpoints
+  # (inferred from the path). Set to the LoRA HITL config (e.g. "pi05_libero_hitl_lora") when
+  # collecting with a fine-tuned checkpoint from a HITL round, so the LoRA architecture matches.
+  config_name: null
+
+hitl:
+  store_only_human: false          # false = store all steps; true = store only human corrections
+
+  # ----- output -----
+  collect_num_rollouts: 50         # number of KEPT rollouts to collect
+  require_success: true            # keep only successful episodes
+  # true => additionally require >= 1 human intervention to keep a rollout; false => keep all
+  # (success-filtered) rollouts, intervention-free ones included.
+  keep_only_hitl_rollouts: true
+  collect_output_path: null        # output .hdf5 path; null => collect but DO NOT save (dry-run)
+
+# Teleop (keyboard or 3D SpaceMouse) + rendering.
+teleop:
+  device: "spacemouse"               # keyboard | spacemouse
+  takeover_key: "tab"
+  camera: "agentview"
+  wrist_camera: "robot0_eye_in_hand"
+  show_wrist: true
+  enable_render: true              # on-screen teleop window (needs a display)
+
+logging:
+  log_level: "INFO"

@@ -99,7 +99,7 @@ from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
-from robometer.utils.logger import get_logger, setup_loguru_logging
+from robometer_policy_learning.utils.logging_compat import get_logger, setup_loguru_logging
 from robometer_policy_learning.algorithms.bc import BCConfig
 from robometer_policy_learning.algorithms.dp import DPConfig
 from robometer_policy_learning.algorithms.dp.modeling_dp import DiffusionActor

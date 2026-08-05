@@ -41,7 +41,7 @@ class SimpleDSRLWrapper(gym.ObservationWrapper):
 
         # Compute language embedding
         if self.sentence_model is not None:
-            from robometer.utils.embedding_utils import compute_text_embeddings
+            from robometer_policy_learning.utils.robometer_compat import compute_text_embeddings
 
             enc = compute_text_embeddings(self.language_instruction, self.sentence_model)
             self.language_encoding = enc.cpu().numpy().astype(np.float32)
@@ -59,7 +59,7 @@ class SimpleDSRLWrapper(gym.ObservationWrapper):
         if obs["prompt"] != self.language_instruction:
             # Compute language embedding
             if self.sentence_model is not None:
-                from robometer.utils.embedding_utils import compute_text_embeddings
+                from robometer_policy_learning.utils.robometer_compat import compute_text_embeddings
 
                 enc = compute_text_embeddings(self.language_instruction, self.sentence_model)
                 self.language_encoding = enc.cpu().numpy().astype(np.float32)

@@ -13,19 +13,34 @@ from openpi_client import image_tools
 
 from scipy.interpolate import interp1d
 
+# One-time guard so plain (noise=None) inference doesn't print on every call (see pi0_infer_with_noise).
+_WARNED_NO_NOISE = False
 
-def load_pi0_policy(checkpoint_dir: str):
+
+def load_pi0_policy(checkpoint_dir: str, config_name: str | None = None):
     """
     Load a pre-trained Pi0 policy from checkpoint directory.
 
     Args:
         checkpoint_dir: Path to the Pi0 checkpoint directory
+        config_name: Explicit openpi TrainConfig name to build the model graph from. Required when
+            the checkpoint's architecture is NOT inferable from the path — in particular a LoRA
+            fine-tuned checkpoint (e.g. HITL ``pi05_libero_hitl_lora``) must be loaded with its LoRA
+            config so the reconstructed model matches the saved params; the substring heuristic below
+            would pick the non-LoRA ``pi05_libero`` and mismatch. When None, falls back to the
+            path-substring heuristic (unchanged legacy behaviour used by DSRL).
 
     Returns:
         Loaded Pi0 policy object (JAX-based) that can be called from PyTorch
     """
     from openpi.policies import policy_config
     from openpi.training import config
+
+    if config_name is not None:
+        pi0_config = config.get_config(config_name)
+        policy = policy_config.create_trained_policy(pi0_config, checkpoint_dir)
+        print(f"✓ Successfully loaded Pi0 policy from {checkpoint_dir} (config={config_name})")
+        return policy
 
     # Determine which Pi0 version to load
     if "libero" in checkpoint_dir:
@@ -120,7 +135,12 @@ def pi0_infer_with_noise(
     # so we broadcast it along the action_horizon dimension.
     # Use Pi0 policy metadata to determine horizon and action_dim.
     if noise is None:
-        print("no noise passed, doing regular pi0/pi0.5 inference")
+        # Plain pi0/pi0.5 inference (default flow sampling). Log once rather than every step, so
+        # noise-free rollouts (e.g. multi-task eval) don't spam stdout.
+        global _WARNED_NO_NOISE
+        if not _WARNED_NO_NOISE:
+            print("no noise passed, doing regular pi0/pi0.5 inference (logged once)")
+            _WARNED_NO_NOISE = True
     else:
         horizon = getattr(pi0_policy, "action_horizon", None)
         #print(f"horizon: {horizon}, noise.shape: {noise.shape}, noise.min: {noise.min()}, noise.max: {noise.max()}")
@@ -251,15 +271,17 @@ class Pi0Wrapper:
     Wrapper class for Pi0 policy to manage state and provide clean interface.
     """
 
-    def __init__(self, checkpoint_dir: str, device: str = "cuda"):
+    def __init__(self, checkpoint_dir: str, device: str = "cuda", config_name: str | None = None):
         """
         Initialize Pi0 wrapper.
 
         Args:
             checkpoint_dir: Path to Pi0 checkpoint
             device: PyTorch device (Pi0 itself runs in JAX, but this is for feature conversion)
+            config_name: Optional explicit openpi TrainConfig name (needed for LoRA / HITL-finetuned
+                checkpoints whose architecture is not inferable from the path). See load_pi0_policy.
         """
-        self.policy = load_pi0_policy(checkpoint_dir)
+        self.policy = load_pi0_policy(checkpoint_dir, config_name=config_name)
         self.device = torch.device(device)
 
         # Freeze Pi0 - it should never be trained

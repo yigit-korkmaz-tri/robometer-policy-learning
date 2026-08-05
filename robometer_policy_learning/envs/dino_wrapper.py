@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from typing import List, Optional
 from transformers import AutoModel, AutoImageProcessor
-from robometer.utils.embedding_utils import compute_video_embeddings
+from robometer_policy_learning.utils.robometer_compat import compute_video_embeddings
 
 
 class DinoEmbeddingWrapper(gym.ObservationWrapper):

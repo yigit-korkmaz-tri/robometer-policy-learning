@@ -585,7 +585,7 @@ class H5ReplayBuffer(BaseReplayBuffer):
         Returns a dict mapping demo_key -> [T, D_total] where D_total = D_per_key *
         len(dino_embedding_keys), concatenated in ``dino_embedding_keys`` order.
         """
-        from robometer.utils.embedding_utils import compute_video_embeddings
+        from robometer_policy_learning.utils.robometer_compat import compute_video_embeddings
 
         embed_keys = list(self.dino_embedding_keys) if self.dino_embedding_keys else []
         if len(embed_keys) == 0:
@@ -654,7 +654,7 @@ class H5ReplayBuffer(BaseReplayBuffer):
 
         Returns a dict mapping instruction string -> embedding [D].
         """
-        from robometer.utils.embedding_utils import compute_text_embeddings
+        from robometer_policy_learning.utils.robometer_compat import compute_text_embeddings
 
         instructions = {}
         for demo_key, cached_demo in (self.hdf5_cache or {}).items():

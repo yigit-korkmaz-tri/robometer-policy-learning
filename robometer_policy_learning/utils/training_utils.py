@@ -17,7 +17,10 @@ from robometer_policy_learning.modules.transformer import TransformerActor, Tran
 
 from robometer_policy_learning.buffers.replay_buffer import ReplayBuffer
 from robometer_policy_learning.buffers.h5_replay_buffer import H5ReplayBuffer
-from robometer_policy_learning.buffers.robometer_replay_buffer import RobometerReplayBuffer, RobometerH5ReplayBuffer
+# NOTE: robometer_replay_buffer imports `robometer` at module scope, which is an optional extra (and
+# cannot be installed alongside openpi). Both Robometer buffers are only reachable when a reward model
+# / eval server is configured, so they are imported lazily in those branches below -- that keeps this
+# module importable in a pi0/LIBERO environment installed without the robometer extra.
 from robometer_policy_learning.buffers.success_failure_replay_buffer import SuccessFailureReplayBuffer
 from robometer_policy_learning.buffers.remote_reward_relabel_buffer import AsyncRewardRelabelBuffer
 from robometer_policy_learning.distributed.clients.reward_relabel_client import RewardRelabelClient
@@ -25,12 +28,12 @@ from robometer_policy_learning.distributed.clients.reward_relabel_client import 
 # Setup imports
 from transformers import AutoModel, AutoImageProcessor
 from sentence_transformers import SentenceTransformer
-from robometer.utils.save import load_model_from_hf
+from robometer_policy_learning.utils.robometer_compat import load_model_from_hf
 from robometer_policy_learning.utils.env_utils import make_env
 from robometer_policy_learning.utils.transitions_transforms import SuccessBonusTransform
 from PIL import Image
 from rich import print as rprint
-from robometer.utils.logger import setup_loguru_logging, get_logger
+from robometer_policy_learning.utils.logging_compat import setup_loguru_logging, get_logger
 from datetime import datetime
 from hydra.core.hydra_config import HydraConfig
 from robometer_policy_learning.loggers.wandb_logger import WandbLogger
@@ -564,6 +567,8 @@ def create_buffer(
             needs_reward_relabel = reward_model is not None or use_eval_server
             if needs_reward_relabel:
                 # Reward relabeling -> RobometerH5ReplayBuffer (embeddings handled by base).
+                from robometer_policy_learning.buffers.robometer_replay_buffer import RobometerH5ReplayBuffer
+
                 return RobometerH5ReplayBuffer(
                     reward_model=reward_model,
                     reward_model_config=reward_model_exp_cfg,
@@ -604,6 +609,8 @@ def create_buffer(
         else:
             # Online buffer (in-memory)
             if reward_model is not None or use_eval_server:
+                from robometer_policy_learning.buffers.robometer_replay_buffer import RobometerReplayBuffer
+
                 return RobometerReplayBuffer(
                     reward_model=reward_model,
                     reward_model_config=reward_model_exp_cfg,
