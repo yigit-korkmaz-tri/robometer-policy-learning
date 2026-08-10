@@ -2,8 +2,8 @@
 Pluggable image-observation encoders used at the featurizer level.
 
 This module provides a single, reusable set of image featurizers (IMPALA, ResNet,
-DINOv2) behind a common interface so the MLP, transformer, and RNN actors/critics can
-share the same encoding code instead of each reimplementing it.
+DINOv2, ViT) behind a common interface so the MLP, transformer, and RNN actors/critics
+can share the same encoding code instead of each reimplementing it.
 
 Contract for every featurizer here:
   * ``forward(x)`` accepts images shaped ``(B, H, W, C)`` / ``(B, C, H, W)`` (and a
@@ -18,6 +18,7 @@ Use :func:`build_image_featurizer` (single key) or :func:`build_image_featurizer
 (per-key over an observation space) to construct these.
 """
 
+import inspect
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -26,6 +27,16 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from robometer_policy_learning.modules.encoders.impala_encoder import ImpalaEncoder, SmallerImpalaEncoder
+
+# Image-encoder types that are handled at the featurizer level (Mode B). Anything else
+# (None in particular) means "no featurizer-level image encoding": either the images are
+# already replaced by precomputed embeddings (Mode A) or they are flattened as-is.
+FEATURIZER_IMAGE_ENCODER_TYPES: Tuple[str, ...] = ("impala", "resnet", "dinov2", "vit")
+
+
+def is_featurizer_image_encoder(image_encoder_type: Optional[str]) -> bool:
+    """Whether ``image_encoder_type`` requests a featurizer-level image encoder (Mode B)."""
+    return isinstance(image_encoder_type, str) and image_encoder_type.lower() in FEATURIZER_IMAGE_ENCODER_TYPES
 
 
 def _to_bchw_float(x: torch.Tensor) -> torch.Tensor:
@@ -234,8 +245,11 @@ class ResNetImageFeaturizer(nn.Module):
         return self.projection(pooled)
 
 
-def _dino_preprocess_params(processor) -> Tuple[List[float], List[float], int]:
-    """Extract ImageNet mean/std and target square size from a HF image processor."""
+def _hf_preprocess_params(processor) -> Tuple[List[float], List[float], int]:
+    """Extract normalization mean/std and target square size from a HF image processor.
+
+    Falls back to ImageNet statistics at 224x224 when no processor is available.
+    """
     mean = list(getattr(processor, "image_mean", [0.485, 0.456, 0.406])) if processor is not None else [0.485, 0.456, 0.406]
     std = list(getattr(processor, "image_std", [0.229, 0.224, 0.225])) if processor is not None else [0.229, 0.224, 0.225]
     size = 224
@@ -277,7 +291,7 @@ class DinoImageFeaturizer(nn.Module):
         self.dino = dinov2_model
         self.finetune = finetune
 
-        mean, std, size = _dino_preprocess_params(dinov2_processor)
+        mean, std, size = _hf_preprocess_params(dinov2_processor)
         self.target_size = size
         self.register_buffer("img_mean", torch.tensor(mean).view(1, 3, 1, 1))
         self.register_buffer("img_std", torch.tensor(std).view(1, 3, 1, 1))
@@ -331,6 +345,146 @@ class DinoImageFeaturizer(nn.Module):
         return emb
 
 
+VIT_DEFAULT_MODEL = "google/vit-base-patch16-224-in21k"
+
+
+def _load_hf_vision_backbone(model: Any, processor: Any = None) -> Tuple[nn.Module, Any]:
+    """Resolve a ``(backbone, processor)`` pair for a HF ViT-style vision encoder.
+
+    ``model`` is either a HF model id (loaded here, together with its image processor) or a
+    ready ``nn.Module``. Dual-encoder checkpoints (CLIP / SigLIP) are reduced to their
+    ``vision_model`` tower so the backbone can be called with pixel values alone.
+    """
+    if isinstance(model, str):
+        from transformers import AutoImageProcessor, AutoModel
+
+        model_id = model
+        model = AutoModel.from_pretrained(model_id)
+        if processor is None or isinstance(processor, str):
+            processor = AutoImageProcessor.from_pretrained(processor or model_id)
+    if hasattr(model, "vision_model"):  # CLIP / SigLIP dual encoder -> keep the vision tower
+        model = model.vision_model
+    return model, processor
+
+
+class ViTImageFeaturizer(nn.Module):
+    """Vision-Transformer image featurizer (HF ViT, CLIP-ViT / SigLIP vision towers).
+
+    Preprocessing (resize + normalize) runs on-device with differentiable ops, so the
+    backbone can be finetuned end-to-end; with ``finetune=False`` it behaves like a frozen
+    encoder (eval + ``no_grad``).
+
+    ``pool`` selects how the token sequence is reduced to one vector per image:
+      * ``"cls"``    - the class token (default; plain ViT and CLIP-ViT both have one)
+      * ``"mean"``   - mean over patch tokens (skipping the class token when present)
+      * ``"pooler"`` - the backbone's own pooled output, falling back to the class token
+    """
+
+    def __init__(
+        self,
+        vit_model: Any = None,
+        vit_processor: Any = None,
+        pool: str = "cls",
+        image_size: Optional[int] = None,
+        output_dim: Optional[int] = None,
+        finetune: bool = False,
+    ):
+        super().__init__()
+        if vit_model is None:
+            vit_model = VIT_DEFAULT_MODEL
+        self.vit, processor = _load_hf_vision_backbone(vit_model, vit_processor)
+
+        pool = (pool or "cls").lower()
+        if pool not in ("cls", "mean", "pooler"):
+            raise ValueError(f"Unsupported vit pool: {pool!r} (expected cls|mean|pooler)")
+        self.pool = pool
+
+        # A class token exists on plain ViT (`cls_token`) and CLIP (`class_embedding`), but not
+        # on SigLIP-style towers; "cls" pooling is meaningless there.
+        embeddings = getattr(self.vit, "embeddings", None)
+        self._has_cls_token = embeddings is not None and any(
+            hasattr(embeddings, attr) for attr in ("cls_token", "class_embedding")
+        )
+        if self.pool == "cls" and not self._has_cls_token:
+            raise ValueError(
+                f"{type(self.vit).__name__} has no class token; use vit_pool='mean' or 'pooler' instead."
+            )
+
+        mean, std, size = _hf_preprocess_params(processor)
+        self.target_size = int(image_size or size)
+        self.register_buffer("img_mean", torch.tensor(mean).view(1, 3, 1, 1))
+        self.register_buffer("img_std", torch.tensor(std).view(1, 3, 1, 1))
+
+        # ViT position embeddings are tied to the checkpoint's native resolution; when feeding a
+        # different size we ask the backbone to interpolate them (supported by HF ViT/CLIP).
+        native_size = int(getattr(self.vit.config, "image_size", self.target_size) or self.target_size)
+        supports_interpolation = "interpolate_pos_encoding" in inspect.signature(self.vit.forward).parameters
+        self._interpolate_pos_encoding = self.target_size != native_size
+        if self._interpolate_pos_encoding and not supports_interpolation:
+            raise ValueError(
+                f"{type(self.vit).__name__} does not support position-embedding interpolation; "
+                f"set vit_image_size={native_size} (the checkpoint's native resolution)."
+            )
+
+        self.finetune = finetune
+        for p in self.vit.parameters():
+            p.requires_grad = finetune
+        # HF checkpoints load in eval mode; when finetuning, follow this module's mode instead so
+        # dropout / stochastic depth behave as expected.
+        if finetune:
+            self.vit.train(self.training)
+        else:
+            self.vit.eval()
+
+        hidden = int(getattr(self.vit.config, "hidden_size", 768))
+        if output_dim is not None:
+            self.projection = nn.Linear(hidden, int(output_dim))
+            self.output_dim = int(output_dim)
+        else:
+            self.projection = None
+            self.output_dim = hidden
+
+    @property
+    def device(self):
+        return self.img_mean.device
+
+    def train(self, mode: bool = True):
+        super().train(mode)
+        if not self.finetune:
+            self.vit.eval()
+        return self
+
+    def _preprocess(self, x: torch.Tensor) -> torch.Tensor:
+        x = _to_bchw_float(x.to(self.device))
+        if x.size(1) == 1:  # grayscale -> replicate into the 3 channels the backbone expects
+            x = x.expand(-1, 3, -1, -1)
+        x = F.interpolate(x, size=(self.target_size, self.target_size), mode="bilinear", align_corners=False)
+        return (x - self.img_mean) / self.img_std
+
+    def _encode(self, pixel_values: torch.Tensor) -> torch.Tensor:
+        kwargs = {"interpolate_pos_encoding": True} if self._interpolate_pos_encoding else {}
+        outputs = self.vit(pixel_values=pixel_values, **kwargs)
+        if self.pool == "pooler":
+            emb = getattr(outputs, "pooler_output", None)
+            return outputs.last_hidden_state[:, 0] if emb is None else emb
+        tokens = outputs.last_hidden_state
+        if self.pool == "cls":
+            return tokens[:, 0]
+        return tokens[:, 1:].mean(dim=1) if self._has_cls_token else tokens.mean(dim=1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        pixel_values = self._preprocess(x)
+        if self.finetune:
+            emb = self._encode(pixel_values)
+        else:
+            with torch.no_grad():
+                emb = self._encode(pixel_values)
+        emb = emb.to(dtype=torch.float32)
+        if self.projection is not None:
+            emb = self.projection(emb)
+        return emb
+
+
 def build_image_featurizer(
     image_encoder_type: str,
     input_shape: Tuple[int, ...],
@@ -350,14 +504,22 @@ def build_image_featurizer(
     # DINOv2
     dinov2_model: Any = None,
     dinov2_processor: Any = None,
+    # ViT (plain ViT / CLIP-ViT / SigLIP vision tower)
+    vit_model: Any = None,
+    vit_processor: Any = None,
+    vit_pool: str = "cls",
+    vit_image_size: Optional[int] = None,
+    vit_projection_dim: Optional[int] = None,
 ) -> nn.Module:
     """Construct a single image featurizer for one image key.
 
     Args:
-        image_encoder_type: one of ``"impala"``, ``"resnet"``, ``"dinov2"``.
+        image_encoder_type: one of ``"impala"``, ``"resnet"``, ``"dinov2"``, ``"vit"``.
         input_shape: image observation shape (H, W, C) / (C, H, W); leading singleton dims ok.
         finetune: whether the encoder's parameters are trainable.
         output_dim: optional projection dim for IMPALA (passed to its encoder).
+        vit_projection_dim: optional projection on top of the ViT embedding; ``None`` keeps the
+            backbone's hidden size.
     Returns:
         An ``nn.Module`` exposing ``.output_dim``.
     """
@@ -390,7 +552,19 @@ def build_image_featurizer(
             image_feature_dim=output_dim,  # optional projection
             finetune=finetune,
         )
-    raise ValueError(f"Unknown image_encoder_type: {image_encoder_type!r} (expected impala|resnet|dinov2)")
+    if etype == "vit":
+        return ViTImageFeaturizer(
+            vit_model=vit_model,
+            vit_processor=vit_processor,
+            pool=vit_pool,
+            image_size=vit_image_size,
+            output_dim=vit_projection_dim,
+            finetune=finetune,
+        )
+    raise ValueError(
+        f"Unknown image_encoder_type: {image_encoder_type!r} "
+        f"(expected one of {'|'.join(FEATURIZER_IMAGE_ENCODER_TYPES)})"
+    )
 
 
 def build_image_featurizers(
@@ -404,6 +578,9 @@ def build_image_featurizers(
 
     Auto-detects image keys when ``image_keys`` is None. The per-key ``input_shape`` is read
     from the observation space. Extra kwargs are forwarded to :func:`build_image_featurizer`.
+
+    For ``vit`` the pretrained backbone is loaded once and shared across image keys (only the
+    optional projection is per-key), mirroring how ``dinov2`` receives one preloaded model.
     """
     import gymnasium as gym
 
@@ -415,6 +592,13 @@ def build_image_featurizers(
     else:
         obs_keys = ["obs"]
     keys = image_keys if image_keys is not None else identify_image_keys(obs_keys)
+
+    if (image_encoder_type or "").lower() == "vit" and len(keys) > 1:
+        vit_model = kwargs.get("vit_model") or VIT_DEFAULT_MODEL
+        if isinstance(vit_model, str):  # load once instead of once per camera
+            kwargs["vit_model"], kwargs["vit_processor"] = _load_hf_vision_backbone(
+                vit_model, kwargs.get("vit_processor")
+            )
 
     featurizers: Dict[str, nn.Module] = {}
     for k in keys:

@@ -56,7 +56,7 @@ model:
   sentence_model: null
   # Featurizer-level image encoding. When `type` is null, images are handled by precomputing DINO embedding.
   image_encoder:
-    type: null  # null | impala | resnet | dinov2
+    type: null  # null | impala | resnet | dinov2 | vit
     finetune: false
     image_feature_dim: 128
     resnet_backbone: ResNet18
@@ -67,3 +67,9 @@ model:
     impala_num_blocks_per_stack: 2
     impala_use_smaller: false
     impala_output_dim: null
+    # ViT (plain ViT, CLIP-ViT, or SigLIP vision tower) -- used when type: vit
+    vit_model: google/vit-base-patch16-224-in21k  # e.g. openai/clip-vit-base-patch32
+    vit_processor: null  # null reuses vit_model's image processor
+    vit_pool: cls  # cls | mean | pooler
+    vit_image_size: null  # null uses the processor's size (224); other sizes interpolate pos-embeddings
+    vit_projection_dim: null  # null keeps the backbone hidden size (768 for ViT-B)

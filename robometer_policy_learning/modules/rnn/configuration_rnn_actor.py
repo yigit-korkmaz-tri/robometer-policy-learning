@@ -4,6 +4,7 @@ import gymnasium as gym
 import torch.nn as nn
 
 from robometer_policy_learning.modules.base import BaseActorConfig
+from robometer_policy_learning.modules.encoders.image_encoders import VIT_DEFAULT_MODEL
 
 
 @dataclass
@@ -54,6 +55,13 @@ class RNNActorConfig(BaseActorConfig):
     impala_num_blocks_per_stack: int = 2
     impala_use_smaller: bool = False
     impala_output_dim: int = None
+
+    # ViT (plain ViT / CLIP-ViT / SigLIP vision tower; used when image_encoder_type == "vit")
+    vit_model: object = VIT_DEFAULT_MODEL
+    vit_processor: object = None
+    vit_pool: str = "cls"  # "cls", "mean", "pooler"
+    vit_image_size: Optional[int] = None
+    vit_projection_dim: Optional[int] = None
 
     def __post_init__(self):
         # super().__post_init__()

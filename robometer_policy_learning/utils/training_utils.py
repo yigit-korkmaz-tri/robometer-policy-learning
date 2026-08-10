@@ -14,6 +14,11 @@ from robometer_policy_learning.utils.transitions_transforms import success_bonus
 from robometer_policy_learning.modules.mlp import MLPActor, MLPActorConfig, MLPCritic, MLPCriticConfig
 from robometer_policy_learning.modules.rnn import RNNActor, RNNActorConfig, RNNCritic, RNNCriticConfig
 from robometer_policy_learning.modules.transformer import TransformerActor, TransformerActorConfig, TransformerCritic, TransformerCriticConfig
+from robometer_policy_learning.modules.encoders import (
+    VIT_DEFAULT_MODEL,
+    build_language_encoder,
+    is_featurizer_image_encoder,
+)
 
 from robometer_policy_learning.buffers.replay_buffer import ReplayBuffer
 from robometer_policy_learning.buffers.h5_replay_buffer import H5ReplayBuffer
@@ -99,7 +104,7 @@ def build_actor_critic_models(
     # are always passed so the actor/critic configs don't fall back to their string defaults
     # (which would crash the transformer feature extractor); they are None outside Mode B/dino.
     image_encoder_kwargs = {"dinov2_model": dinov2_model, "dinov2_processor": dinov2_processor}
-    if image_encoder_type in ("impala", "resnet", "dinov2"):
+    if is_featurizer_image_encoder(image_encoder_type):
         image_encoder_kwargs.update(
             {
                 "image_encoder_type": image_encoder_type,
@@ -118,6 +123,14 @@ def build_actor_critic_models(
                 "impala_use_smaller": OmegaConf.select(cfg, "model.image_encoder.impala_use_smaller", default=False),
                 "impala_output_dim": OmegaConf.select(cfg, "model.image_encoder.impala_output_dim", default=None)
                 or FEATURIZER_DIM,
+                "vit_model": OmegaConf.select(cfg, "model.image_encoder.vit_model", default=VIT_DEFAULT_MODEL)
+                or VIT_DEFAULT_MODEL,
+                "vit_processor": OmegaConf.select(cfg, "model.image_encoder.vit_processor", default=None),
+                "vit_pool": OmegaConf.select(cfg, "model.image_encoder.vit_pool", default="cls"),
+                "vit_image_size": OmegaConf.select(cfg, "model.image_encoder.vit_image_size", default=None),
+                "vit_projection_dim": OmegaConf.select(
+                    cfg, "model.image_encoder.vit_projection_dim", default=None
+                ),
             }
         )
 
@@ -704,11 +717,11 @@ def setup_training(
     # Two image pipelines (mutually exclusive per run):
     #   Mode A (default, model.image_encoder.type is null): the env/buffer precompute *frozen*
     #     DINO embeddings on the fly and the raw image keys are stripped (fast training).
-    #   Mode B (model.image_encoder.type in {impala, resnet, dinov2}): raw images flow to the
+    #   Mode B (model.image_encoder.type in {impala, resnet, dinov2, vit}): raw images flow to the
     #     actor's image featurizer (optionally finetuned); the env/buffer must NOT precompute
     #     embeddings and the image keys must NOT be stripped.
     image_encoder_type = OmegaConf.select(cfg, "model.image_encoder.type", default=None)
-    featurizer_level_image_encoding = image_encoder_type in ("impala", "resnet", "dinov2")
+    featurizer_level_image_encoding = is_featurizer_image_encoder(image_encoder_type)
 
     # Only load DINO weights when actually needed: Mode A precompute, or Mode B with type=dinov2.
     need_dino = cfg.model.dinov2_model is not None and (
@@ -736,8 +749,25 @@ def setup_training(
         actor_dinov2_processor = None
         if dinov2_model is not None:
             remove_obs_keys += dino_image_keys  # raw images replaced by precomputed embeddings
+    # Language embeddings for the 'language' observation key. The backend is chosen by
+    # model.language_encoder.type (minilm/sentence_transformer -> sentence-transformers,
+    # clip -> the CLIP text tower); model.sentence_model stays the on/off switch and the
+    # default checkpoint, so existing configs keep their sentence-transformers behaviour.
     if cfg.model.sentence_model is not None:
-        sentence_model = SentenceTransformer(cfg.model.sentence_model)
+        lang_encoder_type = OmegaConf.select(cfg, "model.language_encoder.type", default="sentence_transformer")
+        if lang_encoder_type in ("sentence_transformer", "minilm", None):
+            sentence_model = SentenceTransformer(cfg.model.sentence_model)
+        else:
+            sentence_model = build_language_encoder(
+                lang_encoder_type=lang_encoder_type,
+                # sentence_model is a sentence-transformers id, so it is not reused here; CLIP falls
+                # back to its own default checkpoint when model_name is unset.
+                model_name=OmegaConf.select(cfg, "model.language_encoder.model_name", default=None),
+                device=OmegaConf.select(cfg, "model.language_encoder.device", default="cpu"),
+                use_projection=OmegaConf.select(cfg, "model.language_encoder.clip_use_projection", default=True),
+                normalize=OmegaConf.select(cfg, "model.language_encoder.clip_normalize", default=False),
+            )
+            logger.info(f"Language encoder: {type(sentence_model).__name__} ({sentence_model.embedding_dim}-d)")
     else:
         sentence_model = None
 

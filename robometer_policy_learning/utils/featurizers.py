@@ -42,7 +42,7 @@ def _build_mlp_layers(input_size, hidden_dims, activation, use_layer_norm=False,
 class ObservationFeaturizer(nn.Module):
     """Per-key observation featurizer for MLP-based actors/critics.
 
-    Image keys are encoded by featurizer-level image encoders (impala | resnet | dinov2,
+    Image keys are encoded by featurizer-level image encoders (impala | resnet | dinov2 | vit,
     built via ``modules.encoders.build_image_featurizers``); the remaining low-dim/vector
     keys go through per-key MLP encoders. The per-key features are concatenated (in the
     order of ``featurizer_cfg``) into a single ``(B, output_dim)`` vector.
@@ -58,7 +58,7 @@ class ObservationFeaturizer(nn.Module):
         activation: str = "relu",
         use_layer_norm: bool = False,
         dropout_rate: float = 0.0,
-        # Image encoder parameters (optional). image_encoder_type in {impala, resnet, dinov2}
+        # Image encoder parameters (optional). image_encoder_type in {impala, resnet, dinov2, vit}
         # enables featurizer-level encoding of image keys; None falls back to MLP/flatten.
         image_encoder_type: Optional[str] = None,
         finetune_image_encoder: bool = False,
@@ -76,6 +76,12 @@ class ObservationFeaturizer(nn.Module):
         impala_num_blocks_per_stack: int = 2,
         impala_use_smaller: bool = False,
         impala_output_dim: int = None,
+        # ViT (plain ViT / CLIP-ViT / SigLIP vision tower; used when image_encoder_type == "vit")
+        vit_model: object = None,
+        vit_processor: object = None,
+        vit_pool: str = "cls",
+        vit_image_size: Optional[int] = None,
+        vit_projection_dim: Optional[int] = None,
     ):
         super().__init__()
         self.observation_space = observation_space
@@ -83,8 +89,11 @@ class ObservationFeaturizer(nn.Module):
         is_dict = isinstance(observation_space, gym.spaces.Dict)
 
         # --- Image encoders (only for image keys, only when an image encoder is requested) ---
+        # Local import (like build_image_featurizers below) avoids an import cycle at module load.
+        from robometer_policy_learning.modules.encoders import is_featurizer_image_encoder
+
         self.image_keys: List[str] = []
-        if image_encoder_type in ("impala", "resnet", "dinov2"):
+        if is_featurizer_image_encoder(image_encoder_type):
             if not is_dict:
                 raise ValueError("Image encoders require a Dict observation space")
             self.image_keys = identify_image_keys(list(observation_space.spaces.keys()))
@@ -110,6 +119,11 @@ class ObservationFeaturizer(nn.Module):
                     impala_use_smaller=impala_use_smaller,
                     dinov2_model=dinov2_model,
                     dinov2_processor=dinov2_processor,
+                    vit_model=vit_model,
+                    vit_processor=vit_processor,
+                    vit_pool=vit_pool,
+                    vit_image_size=vit_image_size,
+                    vit_projection_dim=vit_projection_dim,
                 )
             )
 

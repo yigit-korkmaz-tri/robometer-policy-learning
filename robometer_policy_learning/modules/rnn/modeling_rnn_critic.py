@@ -7,6 +7,7 @@ import gymnasium as gym
 
 from robometer_policy_learning.modules.base import BaseCritic
 from robometer_policy_learning.modules.rnn import RNNCriticConfig
+from robometer_policy_learning.modules.encoders.image_encoders import is_featurizer_image_encoder
 
 
 def _build_mlp_layers(input_size, hidden_dims, activation, use_layer_norm=False, dropout_rate=0.0):
@@ -59,8 +60,8 @@ class RNNCritic(BaseCritic):
         self.use_action = config.use_action
 
         # Build featurizers for dict observations.
-        # If an image_encoder_type is set, build featurizer-level encoders (impala|resnet|dinov2).
-        if config.image_encoder_type in ("impala", "resnet", "dinov2"):
+        # If an image_encoder_type is set, build featurizer-level encoders (impala|resnet|dinov2|vit).
+        if is_featurizer_image_encoder(config.image_encoder_type):
             from robometer_policy_learning.modules.encoders import build_image_featurizers
             from robometer_policy_learning.modules.transformer.transformer_utils import identify_image_keys
 
@@ -83,6 +84,11 @@ class RNNCritic(BaseCritic):
                 impala_use_smaller=config.impala_use_smaller,
                 dinov2_model=getattr(config, "dinov2_model", None),
                 dinov2_processor=getattr(config, "dinov2_processor", None),
+                vit_model=getattr(config, "vit_model", None),
+                vit_processor=getattr(config, "vit_processor", None),
+                vit_pool=getattr(config, "vit_pool", "cls"),
+                vit_image_size=getattr(config, "vit_image_size", None),
+                vit_projection_dim=getattr(config, "vit_projection_dim", None),
             )
 
             # Merge with existing featurizer_cfg (featurizer_cfg takes precedence)

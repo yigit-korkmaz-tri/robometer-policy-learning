@@ -43,8 +43,10 @@ class TransformerCritic(BaseCritic):
             preprocess_obs_transform=config.preprocess_obs_transform,
             # Image encoder parameters
             image_encoder_type=config.image_encoder_type,
+            finetune_image_encoder=config.finetune_image_encoder,
             resnet_backbone=config.resnet_backbone,
             resnet_pretrained=config.resnet_pretrained,
+            resnet_pool=config.resnet_pool,
             image_feature_dim=config.image_feature_dim,
             spatial_softmax_num_kp=config.spatial_softmax_num_kp,
             # DINOv2 encoder parameters (used when image_encoder_type == "dinov2")
@@ -55,8 +57,16 @@ class TransformerCritic(BaseCritic):
             impala_num_blocks_per_stack=config.impala_num_blocks_per_stack,
             impala_use_smaller=config.impala_use_smaller,
             impala_output_dim=config.impala_output_dim,
+            # ViT encoder parameters (used when image_encoder_type == "vit")
+            vit_model=config.vit_model,
+            vit_processor=config.vit_processor,
+            vit_pool=config.vit_pool,
+            vit_image_size=config.vit_image_size,
+            vit_projection_dim=config.vit_projection_dim,
             # Language embedding parameters
             use_language_embeddings=config.use_language_embeddings,
+            lang_encoder_type=config.lang_encoder_type,
+            lang_model_name=config.lang_model_name,
             lang_embedding_dim=config.lang_embedding_dim,
             lang_embedding_device=config.lang_embedding_device,
         )

@@ -45,6 +45,7 @@ from omegaconf import DictConfig, OmegaConf
 from robometer_policy_learning.buffers.h5_replay_buffer import H5ReplayBuffer
 from robometer_policy_learning.buffers.samplers import RandomSampler
 from robometer_policy_learning.envs.robosuite_wrappers import setup_robomimic_env
+from robometer_policy_learning.modules.encoders import is_featurizer_image_encoder
 from robometer_policy_learning.rollouts.evaluation_worker import BatchEvaluationWorker, EvaluationWorker
 
 
@@ -162,7 +163,7 @@ def main():
 
     dinov2_model_id = OmegaConf.select(pre_cfg, "model.dinov2_model", default=None)
     image_encoder_type = OmegaConf.select(pre_cfg, "model.image_encoder.type", default=None)
-    featurizer_level_image_encoding = image_encoder_type in ("impala", "resnet", "dinov2")
+    featurizer_level_image_encoding = is_featurizer_image_encoder(image_encoder_type)
     use_env_dino = bool(dinov2_model_id) and not featurizer_level_image_encoding
 
     dinov2_model = dinov2_processor = None
@@ -178,10 +179,25 @@ def main():
     sentence_model_id = OmegaConf.select(pre_cfg, "model.sentence_model", default=None)
     sentence_model = None
     if sentence_model_id:
-        from sentence_transformers import SentenceTransformer
+        # Match the backend the run trained with (sentence-transformers or the CLIP text tower),
+        # otherwise the 'language' obs would be embedded by a different encoder than at train time.
+        lang_encoder_type = OmegaConf.select(pre_cfg, "model.language_encoder.type", default="sentence_transformer")
+        if lang_encoder_type in ("sentence_transformer", "minilm", None):
+            from sentence_transformers import SentenceTransformer
 
-        print(f"Building sentence model '{sentence_model_id}' for language embeddings...")
-        sentence_model = SentenceTransformer(sentence_model_id)
+            print(f"Building sentence model '{sentence_model_id}' for language embeddings...")
+            sentence_model = SentenceTransformer(sentence_model_id)
+        else:
+            from robometer_policy_learning.modules.encoders import build_language_encoder
+
+            print(f"Building '{lang_encoder_type}' language encoder for language embeddings...")
+            sentence_model = build_language_encoder(
+                lang_encoder_type=lang_encoder_type,
+                model_name=OmegaConf.select(pre_cfg, "model.language_encoder.model_name", default=None),
+                device=OmegaConf.select(pre_cfg, "model.language_encoder.device", default="cpu"),
+                use_projection=OmegaConf.select(pre_cfg, "model.language_encoder.clip_use_projection", default=True),
+                normalize=OmegaConf.select(pre_cfg, "model.language_encoder.clip_normalize", default=False),
+            )
 
     # Keys to drop from observed obs (match what the actor was trained with). For Mode A the actor's
     # own remove_obs_keys already includes the raw image keys, so they are dropped inside act().

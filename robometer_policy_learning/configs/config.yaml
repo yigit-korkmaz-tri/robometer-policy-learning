@@ -70,7 +70,7 @@ model:
   sentence_model: "sentence-transformers/all-MiniLM-L12-v2"
   # Featurizer-level image encoding. When `type` is null, images are handled by precomputing DINO embedding.
   image_encoder:
-    type: null  # null | impala | resnet | dinov2
+    type: null  # null | impala | resnet | dinov2 | vit
     finetune: false
     image_feature_dim: 128  # projection dim for resnet (and optional dino projection)
     resnet_backbone: ResNet18  # ResNet18 | ResNet34 | ResNet50
@@ -81,3 +81,16 @@ model:
     impala_num_blocks_per_stack: 2
     impala_use_smaller: false
     impala_output_dim: null
+    # ViT (plain ViT, CLIP-ViT, or SigLIP vision tower) -- used when type: vit
+    vit_model: google/vit-base-patch16-224-in21k  # e.g. openai/clip-vit-base-patch32
+    vit_processor: null  # null reuses vit_model's image processor
+    vit_pool: cls  # cls | mean | pooler
+    vit_image_size: null  # null uses the processor's size (224); other sizes interpolate pos-embeddings
+    vit_projection_dim: null  # null keeps the backbone hidden size (768 for ViT-B)
+  # Backend used to embed language instructions (only active when sentence_model is set).
+  language_encoder:
+    type: sentence_transformer  # sentence_transformer | minilm | clip
+    model_name: null  # null -> sentence_model above for sentence_transformer, CLIP ViT-B/32 for clip
+    device: cpu
+    clip_use_projection: true  # return CLIP's projected (shared image/text) embedding, 512-d for ViT-B/32
+    clip_normalize: false  # L2-normalize the embeddings

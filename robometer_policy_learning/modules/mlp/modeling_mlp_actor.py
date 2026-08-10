@@ -12,6 +12,7 @@ from robometer_policy_learning.modules.base.distributions import (
     DiagGaussianDistribution,
     SquashedDiagGaussianDistribution,
 )
+from robometer_policy_learning.modules.encoders.image_encoders import is_featurizer_image_encoder
 from robometer_policy_learning.utils.featurizers import ObservationFeaturizer
 from robometer_policy_learning.utils.featurizers import _build_mlp_layers
 
@@ -28,7 +29,7 @@ class MLPActor(BaseActor):
         self.preprocess_obs_transform = config.preprocess_obs_transform
 
         # Initialize observation featurizer only if featurizer config is provided
-        if config.featurizer is not None or config.image_encoder_type in ("impala", "resnet", "dinov2"):
+        if config.featurizer is not None or is_featurizer_image_encoder(config.image_encoder_type):
             self.obs_featurizer = ObservationFeaturizer(
                 observation_space=config.observation_space,
                 featurizer_cfg=config.featurizer,
@@ -48,6 +49,11 @@ class MLPActor(BaseActor):
                 impala_num_blocks_per_stack=config.impala_num_blocks_per_stack,
                 impala_use_smaller=config.impala_use_smaller,
                 impala_output_dim=config.impala_output_dim,
+                vit_model=config.vit_model,
+                vit_processor=config.vit_processor,
+                vit_pool=config.vit_pool,
+                vit_image_size=config.vit_image_size,
+                vit_projection_dim=config.vit_projection_dim,
             )
             # Input dimension - compute by passing example observation through featurizer
             obs_dim = self.obs_featurizer.output_dim

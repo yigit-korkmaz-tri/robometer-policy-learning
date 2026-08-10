@@ -4,6 +4,7 @@ import gymnasium as gym
 import torch.nn as nn
 
 from robometer_policy_learning.modules.base import BaseActorConfig
+from robometer_policy_learning.modules.encoders.image_encoders import VIT_DEFAULT_MODEL
 
 
 @dataclass
@@ -53,7 +54,9 @@ class TransformerActorConfig(BaseActorConfig):
 
     # Language embedding parameters
     use_language_embeddings: bool = True  # Whether to use language embeddings
-    lang_embedding_dim: int = 384  # Dimension of language embeddings (384 for MiniLM-L6)
+    lang_encoder_type: str = "minilm"  # "minilm" / "sentence_transformer" or "clip" (CLIP text tower)
+    lang_model_name: Optional[str] = None  # HF model id; None uses the encoder type's default
+    lang_embedding_dim: int = 384  # Fallback dim; the encoder reports its own (384 MiniLM-L6, 512 CLIP ViT-B/32)
     lang_embedding_device: str = "cpu"  # Device for language encoder
 
     # DINOv2 encoder parameters (used when image_encoder_type == "dinov2")
@@ -65,6 +68,13 @@ class TransformerActorConfig(BaseActorConfig):
     impala_num_blocks_per_stack: int = 2  # Number of residual blocks per stack
     impala_use_smaller: bool = True  # Whether to use SmallerImpalaEncoder variant
     impala_output_dim: int = None
+
+    # ViT (plain ViT / CLIP-ViT / SigLIP vision tower; used when image_encoder_type == "vit")
+    vit_model: Any = VIT_DEFAULT_MODEL
+    vit_processor: Any = None
+    vit_pool: str = "cls"  # "cls", "mean", "pooler"
+    vit_image_size: Optional[int] = None
+    vit_projection_dim: Optional[int] = None
 
     def __post_init__(self):
         # Set default hidden dimensions if not provided

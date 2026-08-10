@@ -142,11 +142,11 @@ class ImageEncoderConfig:
     """Configuration for featurizer-level image encoding (the nested `model.image_encoder` block).
 
     When `type` is null, images are handled by precomputing DINO embeddings (Mode A). When set to
-    impala/resnet/dinov2, raw images are encoded at the featurizer level (Mode B).
+    impala/resnet/dinov2/vit, raw images are encoded at the featurizer level (Mode B).
     """
 
     type: Optional[str] = field(
-        default=None, metadata={"help": "Image encoder type: null | impala | resnet | dinov2"}
+        default=None, metadata={"help": "Image encoder type: null | impala | resnet | dinov2 | vit"}
     )
     finetune: bool = field(default=False, metadata={"help": "Whether image encoder params are trainable"})
     image_feature_dim: int = field(
@@ -170,6 +170,45 @@ class ImageEncoderConfig:
     impala_output_dim: Optional[int] = field(
         default=None, metadata={"help": "Output dimension for IMPALA encoder (None uses default based on architecture)"}
     )
+    vit_model: str = field(
+        default="google/vit-base-patch16-224-in21k",
+        metadata={"help": "HF ViT-style vision backbone (plain ViT, CLIP-ViT, or SigLIP vision tower)"},
+    )
+    vit_processor: Optional[str] = field(
+        default=None, metadata={"help": "HF image processor id for the ViT (None reuses vit_model)"}
+    )
+    vit_pool: str = field(default="cls", metadata={"help": "ViT token pooling: cls | mean | pooler"})
+    vit_image_size: Optional[int] = field(
+        default=None,
+        metadata={"help": "Square input size fed to the ViT (None uses the processor's; needs pos-emb interpolation)"},
+    )
+    vit_projection_dim: Optional[int] = field(
+        default=None, metadata={"help": "Optional linear projection on the ViT embedding (None keeps hidden_size)"}
+    )
+
+
+@dataclass
+class LanguageEncoderConfig:
+    """Configuration for language-instruction encoding (the nested `model.language_encoder` block).
+
+    Used both by the env-level precompute path (a 'language' observation key) and by the
+    transformer feature extractor's on-the-fly encoding of instruction strings.
+    """
+
+    type: str = field(
+        default="sentence_transformer",
+        metadata={"help": "Language encoder type: sentence_transformer | minilm | clip"},
+    )
+    model_name: Optional[str] = field(
+        default=None,
+        metadata={"help": "HF model id (None uses the type's default: MiniLM-L6 / CLIP ViT-B/32)"},
+    )
+    device: str = field(default="cpu", metadata={"help": "Device the language encoder runs on"})
+    clip_use_projection: bool = field(
+        default=True,
+        metadata={"help": "CLIP only: return the projected (shared image/text space) embedding"},
+    )
+    clip_normalize: bool = field(default=False, metadata={"help": "CLIP only: L2-normalize the embeddings"})
 
 
 @dataclass
@@ -185,10 +224,14 @@ class ModelConfig:
     )
     # Nested featurizer-level image encoding block (read via OmegaConf.select in training_utils).
     image_encoder: ImageEncoderConfig = field(default_factory=ImageEncoderConfig)
+    # Nested language-encoder block (backend for `sentence_model` and for in-actor encoding).
+    language_encoder: LanguageEncoderConfig = field(default_factory=LanguageEncoderConfig)
     # Flat image-encoder fields (legacy convention still used by some dsrl_* configs).
     image_encoder_type: Optional[str] = field(
         default=None,
-        metadata={"help": "Image encoder type: 'impala', 'resnet', 'dinov2', or 'flatten'. None means use default."},
+        metadata={
+            "help": "Image encoder type: 'impala', 'resnet', 'dinov2', 'vit', or 'flatten'. None means use default."
+        },
     )
     # IMPALA encoder parameters (used when image_encoder_type == "impala")
     impala_nn_scale: int = field(default=1, metadata={"help": "Scaling factor for IMPALA encoder channel sizes"})
@@ -203,9 +246,11 @@ class ModelConfig:
     )
 
     def __post_init__(self):
-        """Convert dict sub-config to a proper dataclass instance."""
+        """Convert dict sub-configs to proper dataclass instances."""
         if isinstance(self.image_encoder, dict):
             self.image_encoder = ImageEncoderConfig(**self.image_encoder)
+        if isinstance(self.language_encoder, dict):
+            self.language_encoder = LanguageEncoderConfig(**self.language_encoder)
 
 
 @dataclass

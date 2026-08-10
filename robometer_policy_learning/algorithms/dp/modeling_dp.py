@@ -32,6 +32,7 @@ from robometer_policy_learning.modules.base import BaseActorConfig
 from robometer_policy_learning.modules.base.modeling_actor import BaseActor
 from robometer_policy_learning.modules.diffusion import ConditionalMLP, ConditionalTransformer, ConditionalUnet1D
 from robometer_policy_learning.utils.featurizers import ObservationFeaturizer, _build_mlp_layers
+from robometer_policy_learning.modules.encoders.image_encoders import VIT_DEFAULT_MODEL
 
 
 # =====================================================================================
@@ -98,6 +99,13 @@ class DiffusionActorConfig(BaseActorConfig):
     impala_num_blocks_per_stack: int = 2
     impala_use_smaller: bool = False
     impala_output_dim: Optional[int] = None
+
+    # ViT (plain ViT / CLIP-ViT / SigLIP vision tower; used when image_encoder_type == "vit")
+    vit_model: object = VIT_DEFAULT_MODEL
+    vit_processor: object = None
+    vit_pool: str = "cls"  # "cls", "mean", "pooler"
+    vit_image_size: Optional[int] = None
+    vit_projection_dim: Optional[int] = None
 
     # Diffusion hyperparameters
     horizon: int = 1
@@ -170,6 +178,11 @@ class DiffusionActor(BaseActor):
             impala_num_blocks_per_stack=config.impala_num_blocks_per_stack,
             impala_use_smaller=config.impala_use_smaller,
             impala_output_dim=config.impala_output_dim,
+            vit_model=config.vit_model,
+            vit_processor=config.vit_processor,
+            vit_pool=config.vit_pool,
+            vit_image_size=config.vit_image_size,
+            vit_projection_dim=config.vit_projection_dim,
         )
         obs_dim = int(self.obs_featurizer.output_dim)
         if obs_dim <= 0:

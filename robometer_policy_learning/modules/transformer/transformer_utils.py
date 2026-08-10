@@ -9,41 +9,21 @@ from collections import OrderedDict
 from loguru import logger
 import inspect
 
-# ResNet/SpatialSoftmax encoders now live in modules.encoders. Re-exported here for
-# backward compatibility with any code importing them from transformer_utils.
+# ResNet/SpatialSoftmax encoders and the language encoders now live in modules.encoders.
+# Re-exported here for backward compatibility with code importing them from transformer_utils.
 from robometer_policy_learning.modules.encoders.image_encoders import (  # noqa: E402
+    VIT_DEFAULT_MODEL,
     ResNetImageFeaturizer as ResNetEncoder,
     SpatialSoftmax,
     build_image_featurizers,
+    is_featurizer_image_encoder,
 )
-
-
-class MiniLMLangEncoder:
-    """Language encoder using MiniLM model for generating embeddings."""
-
-    def __init__(self, device="cpu", model_name="sentence-transformers/all-MiniLM-L6-v2"):
-        try:
-            from sentence_transformers import SentenceTransformer
-        except ImportError:
-            raise ImportError(
-                "sentence-transformers is required for language encoding. "
-                "Please install it with: pip install sentence-transformers"
-            )
-
-        self.device = device
-        self.model = SentenceTransformer(model_name)
-        self.model.to(device)
-
-        # Provide .encode for compatibility with some callers
-        self.encode = self.model.encode
-
-    def get_lang_emb(self, lang_strings):
-        """Get language embeddings for a list of language strings."""
-        if isinstance(lang_strings, str):
-            lang_strings = [lang_strings]
-
-        embeddings = self.model.encode(lang_strings, convert_to_tensor=True, device=self.device)
-        return embeddings
+from robometer_policy_learning.modules.encoders.language_encoders import (  # noqa: E402,F401
+    CLIPLangEncoder,
+    MiniLMLangEncoder,
+    build_language_encoder,
+    language_embedding_dim,
+)
 
 
 def _build_mlp_layers(input_size, hidden_dims, activation, use_layer_norm=False, dropout_rate=0.0):
@@ -222,7 +202,7 @@ class TransformerFeatureExtractor(nn.Module):
         dropout_rate: float = 0.0,
         preprocess_obs_transform: List[Any] = None,
         # Image encoder parameters
-        image_encoder_type: str = "resnet",  # "resnet", "dinov2", "impala", or "flatten"
+        image_encoder_type: str = "resnet",  # "resnet", "dinov2", "impala", "vit", or "flatten"
         finetune_image_encoder: bool = False,  # whether image encoder params are trainable
         resnet_backbone: str = "ResNet18",  # "ResNet18", "ResNet34", "ResNet50"
         resnet_pretrained: bool = True,
@@ -237,9 +217,17 @@ class TransformerFeatureExtractor(nn.Module):
         impala_num_blocks_per_stack: int = 2,
         impala_use_smaller: bool = False,
         impala_output_dim: int = None,
+        # ViT encoder parameters (used when image_encoder_type == "vit")
+        vit_model: Any = VIT_DEFAULT_MODEL,
+        vit_processor: Any = None,
+        vit_pool: str = "cls",  # "cls", "mean", "pooler"
+        vit_image_size: Optional[int] = None,
+        vit_projection_dim: Optional[int] = None,
         # Language embedding parameters
         use_language_embeddings: bool = True,
-        lang_embedding_dim: int = 384,  # MiniLM-L6 embedding dimension
+        lang_encoder_type: str = "minilm",  # "minilm" / "sentence_transformer" or "clip"
+        lang_model_name: Optional[str] = None,  # None -> the encoder type's default checkpoint
+        lang_embedding_dim: int = 384,  # fallback when the encoder can't report its own dim
         lang_embedding_device: str = "cpu",
     ):
         super().__init__()
@@ -252,15 +240,25 @@ class TransformerFeatureExtractor(nn.Module):
 
         # Language embedding parameters
         self.use_language_embeddings = use_language_embeddings
+        self.lang_encoder_type = lang_encoder_type
         self.lang_embedding_dim = lang_embedding_dim
 
         # Language embedding cache for efficiency
         self.lang_embedding_cache = {}
 
-        # Initialize language encoder if needed
+        # Initialize language encoder if needed (minilm | clip). The encoder reports its own
+        # embedding size, so lang_embedding_dim only acts as a fallback.
         if self.use_language_embeddings:
-            self.lang_encoder = MiniLMLangEncoder(device=lang_embedding_device)
-            print(f"Initialized MiniLM language encoder on device: {lang_embedding_device}")
+            self.lang_encoder = build_language_encoder(
+                lang_encoder_type=lang_encoder_type,
+                model_name=lang_model_name,
+                device=lang_embedding_device,
+            )
+            self.lang_embedding_dim = language_embedding_dim(self.lang_encoder, default=lang_embedding_dim)
+            print(
+                f"Initialized {lang_encoder_type} language encoder ({self.lang_embedding_dim}-d) "
+                f"on device: {lang_embedding_device}"
+            )
         else:
             self.lang_encoder = None
 
@@ -284,6 +282,9 @@ class TransformerFeatureExtractor(nn.Module):
         self.impala_nn_scale = impala_nn_scale
         self.impala_num_blocks_per_stack = impala_num_blocks_per_stack
         self.impala_use_smaller = impala_use_smaller
+        # ViT encoder parameters
+        self.vit_pool = vit_pool
+        self.vit_image_size = vit_image_size
 
         # Identify image keys for special processing
         if isinstance(observation_space, gym.spaces.Dict):
@@ -302,10 +303,10 @@ class TransformerFeatureExtractor(nn.Module):
         # For compatibility with forward method
         self._flatten_keys = self.obs_keys if isinstance(observation_space, gym.spaces.Dict) else None
 
-        # Build per-image-key encoders via the shared factory (impala | resnet | dinov2).
+        # Build per-image-key encoders via the shared factory (impala | resnet | dinov2 | vit).
         # Stored in an nn.ModuleDict so params register, move with .to(), and can be finetuned.
         self.image_encoders = None
-        if self.image_encoder_type in ("impala", "resnet", "dinov2") and self.image_keys:
+        if is_featurizer_image_encoder(self.image_encoder_type) and self.image_keys:
             encoders = build_image_featurizers(
                 observation_space,
                 image_keys=self.image_keys,
@@ -322,6 +323,11 @@ class TransformerFeatureExtractor(nn.Module):
                 impala_use_smaller=impala_use_smaller,
                 dinov2_model=dinov2_model,
                 dinov2_processor=dinov2_processor,
+                vit_model=vit_model,
+                vit_processor=vit_processor,
+                vit_pool=vit_pool,
+                vit_image_size=vit_image_size,
+                vit_projection_dim=vit_projection_dim,
             )
             self.image_encoders = nn.ModuleDict(encoders)
 
@@ -378,7 +384,7 @@ class TransformerFeatureExtractor(nn.Module):
     def _encode_image(self, key: str, v: torch.Tensor) -> torch.Tensor:
         """Encode an image observation for ``key`` via its featurizer-level encoder.
 
-        All encoder types (impala/resnet/dinov2) share one interface: they accept raw
+        All encoder types (impala/resnet/dinov2/vit) share one interface: they accept raw
         images ((B,H,W,C)/(B,C,H,W), uint8 or float), normalize internally, and return
         (B, output_dim). Falls back to normalize+flatten if no encoder is configured.
         """
