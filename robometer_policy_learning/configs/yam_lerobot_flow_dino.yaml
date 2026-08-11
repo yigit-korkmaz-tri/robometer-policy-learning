@@ -1,0 +1,89 @@
+# Flow-matching BC on a real-robot LeRobot dataset (YAM bimanual), frozen-DINO variant (Mode A).
+#
+# Same offline-only setup as yam_lerobot_flow.yaml, but DINOv2 embeddings are precomputed once per
+# dataset and cached under <h5 dir>/.embeddings_cache/. The raw image keys are then stripped and the
+# actor sees a single concatenated `dino_embedding` key (768 x 3 cameras = 2304-d for dinov2-base).
+# Much faster per step than Mode B, at the cost of a frozen visual representation.
+#
+# The first run pays the embedding cost: 3 cameras x 2052 frames through DINOv2.
+#
+# REQUIRES the optional `robometer` extra (`uv sync --extra robometer`): the precompute goes through
+# robometer.utils.embedding_utils.compute_video_embeddings. That extra is mutually exclusive with
+# openpi, so this config cannot run in a pi0/LIBERO environment -- use yam_lerobot_flow.yaml there.
+defaults:
+  - algorithm@offline_algorithm: flow  # loads configs/algorithm/flow.yaml into offline_algorithm
+  - reward_model: null                 # real-robot demos carry no rewards; nothing to relabel
+
+# Debug mode
+debug: false
+
+# Environment configuration
+env:
+  env_name: "yam_lerobot"  # informational only: no environment is constructed
+  offline_only: true       # skip simulator construction; derive spaces from h5_dataset_path
+  h5_dataset_path: "data/lerobot_datasets/yam_raiden_test.hdf5"  # written by scripts/convert_lerobot_to_h5.py
+  max_episode_steps: 1000  # unused without an env; kept for schema completeness
+  use_full_state: false  # must stay false: true skips the embedding precompute entirely
+  use_gt_rewards: true # no reward model, so the dataset's (sparse terminal) rewards are used as-is
+  # Keys to embed with DINO. setup_training appends these to extra_keys_to_drop, so the raw frames
+  # are replaced by the concatenated `dino_embedding` key (in this order).
+  image_keys: ["image", "left_wrist_image", "right_wrist_image"]
+  extra_keys_to_drop: []
+  success_bonus_amount: 0.0
+
+# Training configuration
+training:
+  num_envs: 1 # unused without an env
+  chunk_size: 16 # Flow matching prediction horizon (Tp): #actions sampled jointly (~0.53s at 30fps)
+  n_action_steps: 8 # Actions executed open-loop per predicted chunk before replanning (~0.27s)
+  use_rnn: false  # Use RNN actor and critic
+  num_offline_steps: 100_000  # Number of offline training steps
+  load_dir: null  # Directory to load RL models from (null for no loading)
+  save_interval: 5000  # Save interval in steps
+  continue_training: false  # Continue training from the last checkpoint
+  seed: 0  # Random seed for training
+  use_image_transforms: false  # embeddings are precomputed; augmenting them is meaningless
+  normalize_lowdim_obs: true  # Z-score the 14-d joint state (dino_embedding/language are excluded)
+
+# Logging configuration
+logging:
+  wandb_project: mile_dp
+  wandb_entity: tri
+  wandb_offline: false
+  wandb_log_dir_base: logs/wandb
+  wandb_name: "train_flow_yam_dino"
+  log_level: "INFO"
+
+# Algorithm configuration
+alg:
+  offline_alg_name: flow  # Offline algorithm name (iql, bc, sac, dp, flow)
+
+# Evaluation configuration
+eval:
+  eval_freq: null  # no simulator -> no rollout evaluation
+  eval_num_episodes: 0
+  eval_record_video: false
+  eval_on_first_step: false
+
+# Model configuration
+model:
+  dinov2_model: facebook/dinov2-base  # precompute frozen embeddings for env.image_keys
+  sentence_model: null  # single-task dataset: no `language` observation key is needed
+  # Mode A: type must stay null so the buffer (not the actor) handles images.
+  image_encoder:
+    type: null  # null | impala | resnet | dinov2 | vit
+    finetune: false
+    image_feature_dim: 128
+    resnet_backbone: ResNet18
+    resnet_pretrained: true
+    resnet_pool: spatial_softmax
+    spatial_softmax_num_kp: 32
+    impala_nn_scale: 1
+    impala_num_blocks_per_stack: 2
+    impala_use_smaller: false
+    impala_output_dim: null
+    vit_model: google/vit-base-patch16-224-in21k
+    vit_processor: null
+    vit_pool: cls
+    vit_image_size: null
+    vit_projection_dim: null

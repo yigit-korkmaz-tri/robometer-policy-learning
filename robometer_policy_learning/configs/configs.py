@@ -23,6 +23,14 @@ class EnvironmentConfig:
         default="/scr/shared/reward_fm/policy_training_datasets/metaworld_generation_converted.h5",
         metadata={"help": "Path to the H5 dataset"},
     )
+    offline_only: bool = field(
+        default=False,
+        metadata={
+            "help": "Skip simulator construction entirely: derive the observation/action spaces from "
+            "h5_dataset_path and disable rollout evaluation. Required for real-robot datasets "
+            "(e.g. LeRobot conversions) where no environment exists."
+        },
+    )
     # LIBERO / DSRL env parameters (optional for other envs)
     task_id: int = field(default=0, metadata={"help": "Task ID within suite (e.g., LIBERO)"})
     max_episode_steps: int = field(default=400, metadata={"help": "Max episode steps (e.g., LIBERO / remote robot)"})
@@ -38,6 +46,14 @@ class EnvironmentConfig:
     )
     extra_keys_to_drop: List[str] = field(
         default_factory=list, metadata={"help": "Extra observation keys to drop beyond image_keys"}
+    )
+    default_intervention_label: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "Fallback HITL label (0=policy, 1=human correction, 2=offline demo) stamped on "
+            "offline transitions when the HDF5 has no per-step /data/demo_i/intervention dataset. "
+            "Per-step labels in the file always take precedence. Used by MILE-style algorithms."
+        },
     )
     # Async reward relabeling at environment level (before transitions go to buffer)
     use_async_reward_relabel: bool = field(
@@ -94,6 +110,13 @@ class TrainingConfig:
     load_dir: Optional[str] = field(
         default=None, metadata={"help": "Directory to load RL models from (null for no loading)"}
     )
+    checkpoint: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Which checkpoints/<step> under load_dir to load (null = latest). Used by the "
+            "MILE-style fine-tuning path, which loads a pretrained actor.pt rather than resuming."
+        },
+    )
     save_interval: int = field(default=10000, metadata={"help": "Save interval in steps"})
     continue_training: bool = field(default=False, metadata={"help": "Continue training from the last checkpoint"})
     train_after_episode: bool = field(default=False, metadata={"help": "Train only after episode completion"})
@@ -103,6 +126,15 @@ class TrainingConfig:
     )
     normalize_lowdim_obs: bool = field(
         default=False, metadata={"help": "Z-score low-dim obs using dataset stats computed at buffer init"}
+    )
+    lowdim_norm_eps: float = field(
+        default=1e-6,
+        metadata={
+            "help": "Floor on the per-dimension std used by normalize_lowdim_obs. The default only "
+            "prevents division by zero; raise it (e.g. 1e-2) when some dimensions barely move in "
+            "the dataset, otherwise z-scoring amplifies small real-robot deviations on those dims "
+            "into inputs far outside the training distribution."
+        },
     )
 
 
@@ -128,7 +160,9 @@ class LoggingConfig:
 class EvaluationConfig:
     """Configuration for evaluation settings."""
 
-    eval_freq: int = field(default=10000, metadata={"help": "Evaluation frequency in rollouts"})
+    eval_freq: Optional[int] = field(
+        default=10000, metadata={"help": "Evaluation frequency in rollouts (null disables evaluation)"}
+    )
     eval_num_episodes: int = field(default=25, metadata={"help": "Number of episodes for evaluation"})
     eval_record_video: bool = field(default=True, metadata={"help": "Whether to record videos during evaluation"})
     eval_on_first_step: bool = field(default=False, metadata={"help": "Evaluate on the first step before any training"})

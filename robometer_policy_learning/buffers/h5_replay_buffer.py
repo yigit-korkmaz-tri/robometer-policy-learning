@@ -81,6 +81,8 @@ class H5ReplayBuffer(BaseReplayBuffer):
         self.rename_obs_keys = rename_obs_keys
         self.min_action = min_action
         self.max_action = max_action
+        # Cached, zero-guarded (max - min); see _normalize_action.
+        self._action_span = None
         self.dataset_weights = dataset_weights
 
         # When set, every emitted transition's info carries {"intervention": label}. Used to tag
@@ -218,7 +220,23 @@ class H5ReplayBuffer(BaseReplayBuffer):
                 continue
             x = np.concatenate(arrays, axis=0)  # [N, *feat]
             mean = x.mean(axis=0)
-            std = np.maximum(x.std(axis=0), self.lowdim_norm_eps)
+            raw_std = x.std(axis=0)
+            std = np.maximum(raw_std, self.lowdim_norm_eps)
+            # A dimension that barely moves in the dataset (a joint held still for the whole task)
+            # gets divided by a near-zero std, so a millimetre of real-robot variation at inference
+            # explodes into a huge z-scored input the policy never saw in training. The eps floor
+            # only prevents division by zero, not the amplification -- warn with the offending dims
+            # so lowdim_norm_eps can be raised (training.lowdim_norm_eps) or the key dropped.
+            # Only warn when the floor is NOT already protecting these dims (effective std still
+            # tiny), so raising lowdim_norm_eps actually silences it.
+            degenerate = np.flatnonzero(np.atleast_1d(std) < 1e-3)
+            if degenerate.size:
+                logger.warning(
+                    f"Low-dim key '{key}': dims {degenerate.tolist()} normalize with std < 1e-3 "
+                    f"(min {float(np.min(std)):.2e}); z-scoring will amplify small real-robot "
+                    f"deviations on them into inputs far outside the training distribution. "
+                    f"Raise training.lowdim_norm_eps (currently {self.lowdim_norm_eps:g})."
+                )
             stats[key] = {"mean": mean.astype(np.float32), "std": std.astype(np.float32)}
         return stats
 
@@ -257,6 +275,15 @@ class H5ReplayBuffer(BaseReplayBuffer):
     def _get_dones_array(self, demo_group: h5py.Group) -> Optional[np.ndarray]:
         return np.array(demo_group["dones"]) if "dones" in demo_group else None
 
+    def _get_intervention_array(self, demo_group: h5py.Group) -> Optional[np.ndarray]:
+        """Per-step HITL labels (0=policy, 1=human correction, 2=offline demo), when the file has them.
+
+        Written by the HITL collectors (e.g. scripts/collect_hitl_libero_pi0.py). MILE-style
+        algorithms need to tell human corrections from autonomous steps *within* a dataset, which
+        ``default_intervention_label`` (one constant for the whole file) cannot express.
+        """
+        return np.array(demo_group["intervention"]) if "intervention" in demo_group else None
+
     def _get_file_prefix(self, file_basename: str, file_idx: int) -> str:
         return f"file_{file_idx}"
 
@@ -285,6 +312,29 @@ class H5ReplayBuffer(BaseReplayBuffer):
     # --------------------------
     # Zero obs factory
     # --------------------------
+    def _normalize_action(self, action):
+        """Map a stored env-space action into the policy's [-1, 1] space.
+
+        No-op when the action bounds are unset (the actor doesn't normalize either then).
+        Degenerate dims -- ``max == min``, e.g. a joint that never moves in the dataset, which is
+        normal for a bimanual robot performing a single-arm task -- would divide by zero and poison
+        the entire batch with inf/NaN, so their span is replaced by 1.0 and the dim normalizes to a
+        constant. This mirrors ``BaseReplayBuffer._normalize_action_batch``, whose guard this class
+        bypasses because it overrides the whole sampling path.
+        """
+        if self.min_action is None or self.max_action is None:
+            return action
+        if self._action_span is None:
+            span = np.asarray(self.max_action, dtype=np.float32) - np.asarray(self.min_action, dtype=np.float32)
+            degenerate = np.flatnonzero(span == 0)
+            if degenerate.size:
+                logger.warning(
+                    f"Action dims {degenerate.tolist()} have zero width in the dataset; they will "
+                    "normalize to a constant instead of producing NaNs."
+                )
+            self._action_span = np.where(span == 0, 1.0, span)
+        return 2.0 * (action - self.min_action) / self._action_span - 1.0
+
     def _create_zero_observation(self, obs_key: str):
         print(f"Creating zero observation for {obs_key}")
         raise Exception("Creating zero observation for in h5")
@@ -405,6 +455,12 @@ class H5ReplayBuffer(BaseReplayBuffer):
                     if dones is not None:
                         cached_demo["dones"] = np.array(dones[:actual_data_length])
 
+                    interventions = self._get_intervention_array(group)
+                    if interventions is not None:
+                        cached_demo["intervention"] = np.asarray(
+                            interventions[:actual_data_length], dtype=np.int64
+                        )
+
                     all_cached_data[demo_key] = cached_demo
 
         self.hdf5_cache = all_cached_data
@@ -452,9 +508,7 @@ class H5ReplayBuffer(BaseReplayBuffer):
 
                     for t in range(actual_episode_length):
                         action = actions[t]
-                        if self.min_action is not None and self.max_action is not None:
-                            action = (action - self.min_action) / (self.max_action - self.min_action)
-                            action = 2 * action - 1
+                        action = self._normalize_action(action)
                         next_obs = obs_list[t] if t == actual_episode_length - 1 else obs_list[t + 1]
                         self.transitions.append(
                             Transition(
@@ -502,7 +556,15 @@ class H5ReplayBuffer(BaseReplayBuffer):
             # Load subsequent frames in a single read: shape [episode_len, H, W, C]
             with self._get_hdf5_file(h5_path) as file:
                 demo_group = self._get_demo_group(file, original_demo_name)
-                all_next_frames = np.array(demo_group["next_obs"][img_key][:episode_len])
+                if "next_obs" in demo_group:
+                    all_next_frames = np.array(demo_group["next_obs"][img_key][:episode_len])
+                else:
+                    # Datasets written without a next_obs group (e.g. the LeRobot conversions from
+                    # scripts/convert_lerobot_to_h5.py, which skip it to halve the file size) still
+                    # have every frame under obs: next_obs[t] is obs[t+1], and the terminal step's
+                    # next_obs aliases obs, exactly as the per-sample path treats is_last.
+                    obs_frames = np.array(self._get_obs_group(demo_group)[img_key][: episode_len + 1])
+                    all_next_frames = np.concatenate([obs_frames[1:], obs_frames[-1:]], axis=0)[:episode_len]
 
             # Concatenate to [episode_len+1, H, W, C]
             video_frames = np.concatenate([initial_frame[np.newaxis, ...], all_next_frames], axis=0)
@@ -801,17 +863,20 @@ class H5ReplayBuffer(BaseReplayBuffer):
                     req_map[f"{i}:{key}:next"] = (i, key, True)
 
             action = actions[t]
-            if self.min_action is not None and self.max_action is not None:
-                action = (action - self.min_action) / (self.max_action - self.min_action)
-                action = 2 * action - 1
+            action = self._normalize_action(action)
             reward = rewards[t] if rewards is not None and t < len(rewards) else 0.0
             done = dones[t] if dones is not None and t < len(dones) else (t == actual_len - 1)
             language_instruction = self._demo_id_to_demo_lang_str.get(demo_key, None)
-            info = (
-                {"intervention": self.default_intervention_label}
-                if self.default_intervention_label is not None
-                else None
-            )
+            # Per-step HITL labels from the file win over the whole-file constant, so a dataset that
+            # mixes offline demos and human corrections keeps its per-transition labels (MILE needs
+            # both classes). Falls back to default_intervention_label when the file has none.
+            per_step_interventions = cached_demo.get("intervention", None)
+            if per_step_interventions is not None and t < len(per_step_interventions):
+                info = {"intervention": int(per_step_interventions[t])}
+            elif self.default_intervention_label is not None:
+                info = {"intervention": self.default_intervention_label}
+            else:
+                info = None
             transitions.append(
                 Transition(
                     obs=obs,
@@ -910,9 +975,7 @@ class H5ReplayBuffer(BaseReplayBuffer):
 
                 actions = cached_demo["actions"]
                 action = actions[t]
-                if self.min_action is not None and self.max_action is not None:
-                    action = (action - self.min_action) / (self.max_action - self.min_action)
-                    action = 2 * action - 1
+                action = self._normalize_action(action)
                 rewards = cached_demo.get("rewards")
                 reward = rewards[t] if rewards is not None and t < len(rewards) else 0.0
                 dones = cached_demo.get("dones")

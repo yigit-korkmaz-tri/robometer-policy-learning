@@ -35,6 +35,7 @@ from transformers import AutoModel, AutoImageProcessor
 from sentence_transformers import SentenceTransformer
 from robometer_policy_learning.utils.robometer_compat import load_model_from_hf
 from robometer_policy_learning.utils.env_utils import make_env
+from robometer_policy_learning.utils.dataset_spaces import build_spaces_from_h5
 from robometer_policy_learning.utils.transitions_transforms import SuccessBonusTransform
 from PIL import Image
 from rich import print as rprint
@@ -67,6 +68,37 @@ def load_checkpoint(algorithm, load_dir):
     algorithm.load(load_dir)
 
     return algorithm.step_counter
+
+
+def resolve_checkpoint_dir(load_dir: str, checkpoint=None) -> str:
+    """Resolve the checkpoint directory (containing ``actor.pt``) inside a training run dir.
+
+    Expected layout is ``load_dir/checkpoints/<step>/actor.pt``. ``checkpoint`` picks a specific
+    ``<step>`` (e.g. ``50000`` or ``latest``); when None, prefer ``latest`` else the largest numeric
+    step. A ``load_dir`` that directly contains ``actor.pt`` is returned as-is.
+
+    Mirrors ``scripts/train_hitl.py::_resolve_checkpoint_dir`` so both entry points agree on how a
+    pretraining run's checkpoints are addressed.
+    """
+    if os.path.exists(os.path.join(load_dir, "actor.pt")):
+        return load_dir
+    ckpt_root = os.path.join(load_dir, "checkpoints")
+    if not os.path.isdir(ckpt_root):
+        raise FileNotFoundError(f"No 'checkpoints/' directory under {load_dir} (and no actor.pt directly in it).")
+    if checkpoint is not None:
+        cand = os.path.join(ckpt_root, str(checkpoint))
+        if not os.path.exists(os.path.join(cand, "actor.pt")):
+            raise FileNotFoundError(f"actor.pt not found in {cand} (checkpoint={checkpoint!r}).")
+        return cand
+    steps = [d for d in os.listdir(ckpt_root) if os.path.exists(os.path.join(ckpt_root, d, "actor.pt"))]
+    if not steps:
+        raise FileNotFoundError(f"No '<step>/actor.pt' checkpoints found under {ckpt_root}.")
+    if "latest" in steps:
+        chosen = "latest"
+    else:
+        numeric = [d for d in steps if d.isdigit()]
+        chosen = max(numeric, key=int) if numeric else sorted(steps)[-1]
+    return os.path.join(ckpt_root, chosen)
 
 
 def build_actor_critic_models(
@@ -193,7 +225,11 @@ def build_actor_critic_models(
     # Flow Matching: build the bespoke FlowMatchingActor here (like DiffusionActor), reusing the
     # shared featurizer / image-encoder settings plus the flow-matching hyperparameters from the
     # algorithm config (offline_algorithm / flow.yaml). FM is BC-like: no critic / v_net.
-    if cfg.alg.offline_alg_name.lower() == "flow":
+    # "flow_mile" needs the same actor class: FlowMILE trains a FlowMatchingActor, so this builds
+    # the correctly-shaped placeholder that the pretrained checkpoint's weights are loaded into.
+    # Its flow hyperparameters (sigma_min, num_inference_steps, ...) are NOT in flow_mile.yaml --
+    # they live on the loaded actor -- so the _fm() lookups below fall back to their defaults here.
+    if cfg.alg.offline_alg_name.lower() in ("flow", "flow_mile"):
         from robometer_policy_learning.algorithms.flow_matching import FlowMatchingActor, FlowMatchingActorConfig
 
         def _fm(key, default):
@@ -415,7 +451,8 @@ class TrainingComponents:
     dinov2_processor: Any
     sentence_model: Any
 
-    # Environments
+    # Environments. Both are None when cfg.env.offline_only is set (real-robot datasets have no
+    # simulator); use observation_space/action_space instead of poking at env.single_*_space.
     env: Any
     eval_env: Any
     remove_obs_keys: list
@@ -425,6 +462,10 @@ class TrainingComponents:
     actor: Any
     critic: Any
     v_net: Any
+
+    # Spaces the actor/critic were built from (from the env, or synthesized from the dataset).
+    observation_space: Any = None
+    action_space: Any = None
 
     # Reward model (optional)
     reward_model: Any = None
@@ -485,6 +526,8 @@ def create_buffer(
     min_action=None,
     max_action=None,
     normalize_lowdim_obs: bool = False,
+    lowdim_norm_eps: float = 1e-6,
+    default_intervention_label: Optional[int] = None,
 ) -> Any:
     """
     Create a replay buffer for training.
@@ -574,6 +617,8 @@ def create_buffer(
                     min_action=min_action,
                     max_action=max_action,
                     normalize_lowdim_obs=normalize_lowdim_obs,
+                    lowdim_norm_eps=lowdim_norm_eps,
+                    default_intervention_label=default_intervention_label,
                 )
 
             # Image-based offline data: attach DINO + sentence embeddings.
@@ -604,6 +649,8 @@ def create_buffer(
                     min_action=min_action,
                     max_action=max_action,
                     normalize_lowdim_obs=normalize_lowdim_obs,
+                    lowdim_norm_eps=lowdim_norm_eps,
+                    default_intervention_label=default_intervention_label,
                 )
             # No reward relabeling: plain H5ReplayBuffer with embeddings only.
             return H5ReplayBuffer(
@@ -618,6 +665,8 @@ def create_buffer(
                 min_action=min_action,
                 max_action=max_action,
                 normalize_lowdim_obs=normalize_lowdim_obs,
+                lowdim_norm_eps=lowdim_norm_eps,
+                default_intervention_label=default_intervention_label,
             )
         else:
             # Online buffer (in-memory)
@@ -804,53 +853,80 @@ def setup_training(
     else:
         use_gt_rewards = True
 
-    if "libero" in cfg.env.env_name:
-        # setup so we can parse make_env properly
-        env_name = cfg.env.env_name + "/" + str(cfg.env.task_id)
+    offline_only = OmegaConf.select(cfg, "env.offline_only", default=False)
+    if offline_only:
+        # Real-robot datasets (e.g. LeRobot conversions) have no simulator: skip env construction
+        # entirely and derive the spaces the actor is built from out of the dataset itself. Rollout
+        # evaluation is impossible in this mode, so eval_env stays None.
+        logger.info("env.offline_only=True: skipping environment construction (no simulator)")
+        env = None
+        eval_env = None
+        # Keys the buffer synthesizes after loading. They must be in the observation space or the
+        # actor's featurizer will have no entry for them when they show up in a batch.
+        extra_obs_spaces = {}
+        if dinov2_model is not None:
+            dino_dim = int(dinov2_model.config.hidden_size) * len(dino_image_keys)
+            extra_obs_spaces["dino_embedding"] = gym.spaces.Box(
+                low=-np.inf, high=np.inf, shape=(dino_dim,), dtype=np.float32
+            )
+        if sentence_model is not None:
+            lang_dim = int(sentence_model.get_sentence_embedding_dimension())
+            extra_obs_spaces["language"] = gym.spaces.Box(
+                low=-np.inf, high=np.inf, shape=(lang_dim,), dtype=np.float32
+            )
+        observation_space, action_space = build_spaces_from_h5(
+            cfg.env.h5_dataset_path,
+            remove_obs_keys=list(remove_obs_keys),
+            extra_obs_spaces=extra_obs_spaces,
+        )
     else:
-        env_name = cfg.env.env_name
+        if "libero" in cfg.env.env_name:
+            # setup so we can parse make_env properly
+            env_name = cfg.env.env_name + "/" + str(cfg.env.task_id)
+        else:
+            env_name = cfg.env.env_name
 
-    # Setup environments
-    logger.info("Setting up environments")
-    env, eval_env = make_env(
-        env_name=env_name,
-        num_envs=cfg.training.num_envs,
-        max_episode_steps=cfg.env.max_episode_steps,
-        chunk_size=cfg.training.chunk_size,
-        n_action_steps=cfg.training.get("n_action_steps", 1),
-        use_full_state=cfg.env.use_full_state,
-        dinov2_model=dinov2_model,
-        dinov2_processor=dinov2_processor,
-        dino_image_keys=dino_image_keys,
-        device=device,
-        sentence_model=sentence_model,
-        render_mode="rgb_array",
-        terminate_on_success=True,
-        seed=cfg.training.seed,
-        dataset_path=getattr(cfg.env, "h5_dataset_path", None),
-    )
+        # Setup environments
+        logger.info("Setting up environments")
+        env, eval_env = make_env(
+            env_name=env_name,
+            num_envs=cfg.training.num_envs,
+            max_episode_steps=cfg.env.max_episode_steps,
+            chunk_size=cfg.training.chunk_size,
+            n_action_steps=cfg.training.get("n_action_steps", 1),
+            use_full_state=cfg.env.use_full_state,
+            dinov2_model=dinov2_model,
+            dinov2_processor=dinov2_processor,
+            dino_image_keys=dino_image_keys,
+            device=device,
+            sentence_model=sentence_model,
+            render_mode="rgb_array",
+            terminate_on_success=True,
+            seed=cfg.training.seed,
+            dataset_path=getattr(cfg.env, "h5_dataset_path", None),
+        )
 
-    # Get action and observation spaces
-    if hasattr(env, "single_action_space"):
-        action_space = env.single_action_space
-    else:
-        action_space = env.action_space
+        # Get action and observation spaces
+        if hasattr(env, "single_action_space"):
+            action_space = env.single_action_space
+        else:
+            action_space = env.action_space
 
-    if hasattr(env, "single_observation_space"):
-        observation_space = env.single_observation_space
-    else:
-        observation_space = env.observation_space
+        if hasattr(env, "single_observation_space"):
+            observation_space = env.single_observation_space
+        else:
+            observation_space = env.observation_space
 
-    # Log environment info
-    logger.info(f"Observation space: {env.observation_space if hasattr(env, 'observation_space') else 'N/A'}")
-    logger.info(f"Action space: {env.action_space if hasattr(env, 'action_space') else 'N/A'}")
+        # Log environment info
+        logger.info(f"Observation space: {env.observation_space if hasattr(env, 'observation_space') else 'N/A'}")
+        logger.info(f"Action space: {env.action_space if hasattr(env, 'action_space') else 'N/A'}")
 
-    # Save example image if available
-    obs, _ = env.reset()
-    if "image" in obs:
-        ex_img = obs["image"][0]
-        ex_img_pil = Image.fromarray(ex_img)
-        ex_img_pil.save("example_image.png")
+        # Save example image if available
+        obs, _ = env.reset()
+        if "image" in obs:
+            ex_img = obs["image"][0]
+            ex_img_pil = Image.fromarray(ex_img)
+            ex_img_pil.save("example_image.png")
 
     # Build models
     logger.info("Building actor, critic, and v_net models")
@@ -892,6 +968,8 @@ def setup_training(
         actor=actor,
         critic=critic,
         v_net=v_net,
+        observation_space=observation_space,
+        action_space=action_space,
         reward_model=reward_model,
         reward_model_exp_cfg=reward_model_exp_cfg,
         use_gt_rewards=use_gt_rewards,

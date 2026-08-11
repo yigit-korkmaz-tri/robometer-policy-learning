@@ -1,0 +1,106 @@
+# Flow-matching BC on a real-robot LeRobot dataset (YAM bimanual), trained fully offline.
+#
+# There is no simulator, so `env.offline_only: true` makes setup_training skip make_env entirely
+# and synthesize the observation/action spaces from the HDF5 instead. Rollout evaluation is
+# therefore disabled (`eval.eval_freq: null`) -- evaluate checkpoints on the robot.
+#
+# Prepare the dataset first:
+#   uv run python scripts/convert_lerobot_to_h5.py \
+#     --repo-id ykorkmaz/yam_raiden_test \
+#     --output data/lerobot_datasets/yam_raiden_test.hdf5 --image-size 224
+#
+# This is the Mode B config: raw images go to the actor's image encoder, trained end to end.
+# See yam_lerobot_flow_dino.yaml for the frozen-DINO-precompute variant (Mode A).
+defaults:
+  - algorithm@offline_algorithm: flow  # loads configs/algorithm/flow.yaml into offline_algorithm
+  - reward_model: null                 # real-robot demos carry no rewards; nothing to relabel
+  # Flow Matching builds its own FlowMatchingActor and does not use a `policy` group; the featurizer/obs-encoder
+  # settings it reads (policy.mlp.activation/use_layer_norm/dropout_rate) fall back to relu/false/0.0.
+
+# Debug mode
+debug: false
+
+# Environment configuration
+env:
+  env_name: "yam_lerobot"  # informational only: no environment is constructed
+  offline_only: true       # skip simulator construction; derive spaces from h5_dataset_path
+  h5_dataset_path: "data/lerobot_datasets/yam_raiden_test.hdf5"  # written by scripts/convert_lerobot_to_h5.py
+  max_episode_steps: 1000  # unused without an env; kept for schema completeness
+  use_full_state: false  # only affects robosuite envs; the dataset defines the obs keys here
+  use_gt_rewards: true # no reward model, so the dataset's (sparse terminal) rewards are used as-is
+  image_keys: ["image", "left_wrist_image", "right_wrist_image"]  # the three YAM cameras
+  extra_keys_to_drop: []  # keep all three cameras plus the 14-d joint state
+  success_bonus_amount: 0.0
+
+# Training configuration
+training:
+  num_envs: 1 # unused without an env
+  chunk_size: 16 # Flow matching prediction horizon (Tp): #actions sampled jointly (~0.53s at 30fps)
+  n_action_steps: 8 # Actions executed open-loop per predicted chunk before replanning (~0.27s)
+  use_rnn: false  # Use RNN actor and critic
+  num_offline_steps: 100_000  # Number of offline training steps
+  load_dir: null  # Directory to load RL models from (null for no loading)
+  save_interval: 5000  # Save interval in steps
+  continue_training: false  # Continue training from the last checkpoint
+  seed: 0  # Random seed for training
+  # Augmentation would help a lot with only a handful of demos, but it runs per transition in
+  # numpy over batch*chunk_size*cameras*2 frames: measured 7.7 s/step with it vs 2.8 s/step
+  # without, on 3x 224x224 cameras. Turn it on once throughput is acceptable.
+  use_image_transforms: false
+  normalize_lowdim_obs: true  # Z-score the 14-d joint state using dataset stats
+  # Floor on the per-dim std. The 1e-6 default only avoids division by zero: on this dataset the
+  # left arm never moves (std down to 1e-6), so a 1 mrad deviation at inference would z-score to
+  # ~1000 while training saw ~0. 1e-2 rad keeps those dims in a sane range on the real robot.
+  lowdim_norm_eps: 1.0e-2
+
+# Three 224x224 cameras are far heavier than the robomimic 84x84 defaults, in both directions:
+# the chunked sampler reads chunk_size timesteps per sample (batch*16*3 cameras*2 for obs+next
+# ~= 6k HDF5 frame reads per step at batch 64, ~0.2 s), and 64*3 frames through a finetuned
+# IMPALA encoder is already most of a 24 GB GPU. batch_size 256 OOMs; raise this only after
+# dropping cameras via env.extra_keys_to_drop or shrinking --image-size.
+offline_algorithm:
+  batch_size: 64
+
+# Logging configuration
+logging:
+  wandb_project: mile_dp
+  wandb_entity: tri
+  wandb_offline: false
+  wandb_log_dir_base: logs/wandb
+  wandb_name: "train_flow_yam"
+  log_level: "INFO"
+
+# Algorithm configuration
+alg:
+  offline_alg_name: flow  # Offline algorithm name (iql, bc, sac, dp, flow)
+
+# Evaluation configuration
+eval:
+  eval_freq: null  # no simulator -> no rollout evaluation
+  eval_num_episodes: 0
+  eval_record_video: false
+  eval_on_first_step: false
+
+# Model configuration
+model:
+  dinov2_model: null
+  sentence_model: null  # single-task dataset: no `language` observation key is needed
+  # Featurizer-level image encoding (Mode B). Raw uint8 frames flow into the actor's encoder.
+  image_encoder:
+    type: impala  # null | impala | resnet | dinov2 | vit
+    finetune: true
+    image_feature_dim: 128
+    resnet_backbone: ResNet18
+    resnet_pretrained: true
+    resnet_pool: spatial_softmax
+    spatial_softmax_num_kp: 32
+    impala_nn_scale: 1
+    impala_num_blocks_per_stack: 2
+    impala_use_smaller: false
+    impala_output_dim: null
+    # ViT (plain ViT, CLIP-ViT, or SigLIP vision tower) -- used when type: vit
+    vit_model: google/vit-base-patch16-224-in21k  # e.g. openai/clip-vit-base-patch32
+    vit_processor: null  # null reuses vit_model's image processor
+    vit_pool: cls  # cls | mean | pooler
+    vit_image_size: null  # null uses the processor's size (224); other sizes interpolate pos-embeddings
+    vit_projection_dim: null  # null keeps the backbone hidden size (768 for ViT-B)

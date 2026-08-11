@@ -1,0 +1,110 @@
+# One-shot Flow MILE fine-tuning on a static real-robot dataset of demos + human corrections.
+#
+# Unlike scripts/train_hitl.py -- which alternates rollout collection and training over many rounds,
+# re-snapshotting the rollout policy each time -- this does a SINGLE fine-tuning pass over one fixed
+# HDF5. The frozen rollout policy (MILE's mental model) is snapshotted once from training.load_dir,
+# which must therefore be the run whose policy actually collected these rollouts.
+#
+# Requirements on the dataset:
+#   * per-step /data/demo_i/intervention labels: 0 = autonomous policy, 1 = human correction,
+#     2 = offline demo. Both 0 and 1 must be present or the probit BCE has nothing to learn from
+#     (training fails fast with a clear message).
+#   * the same observation keys / action space the pretrained flow checkpoint was trained on.
+#
+# Usage (pretrain with yam_lerobot_flow.yaml first, then point load_dir at that run):
+#   uv run python scripts/train_supervised.py --config-name yam_lerobot_flow_mile \
+#     training.load_dir=outputs/2026-08-10/18-13-47 \
+#     env.h5_dataset_path=data/lerobot_datasets/yam_hitl.hdf5
+# Add training.checkpoint=<step> to pick a checkpoint other than the latest.
+defaults:
+  - algorithm@offline_algorithm: flow_mile  # loads configs/algorithm/flow_mile.yaml
+  - reward_model: null                      # real-robot demos carry no rewards; nothing to relabel
+
+# Debug mode
+debug: false
+
+# Environment configuration
+env:
+  env_name: "yam_lerobot"  # informational only: no environment is constructed
+  offline_only: true       # skip simulator construction; derive spaces from h5_dataset_path
+  h5_dataset_path: "data/lerobot_datasets/yam_raiden_test.hdf5"  # demos + corrections HDF5
+  max_episode_steps: 1000  # unused without an env; kept for schema completeness
+  use_full_state: false
+  use_gt_rewards: true
+  image_keys: ["image", "left_wrist_image", "right_wrist_image"]
+  extra_keys_to_drop: []
+  success_bonus_amount: 0.0
+  # Fallback label when the HDF5 has no per-step intervention dataset. Per-step labels in the file
+  # always take precedence; leave null so a mislabelled dataset fails loudly instead of silently
+  # training on one class.
+  default_intervention_label: null
+
+# Training configuration
+training:
+  num_envs: 1 # unused without an env
+  # Must match the pretrained actor's horizon: FlowMILE scores whole chunks with the loaded
+  # FlowMatchingActor, whose horizon is fixed at pretraining time.
+  chunk_size: 16
+  n_action_steps: 8
+  use_rnn: false
+  # Fine-tuning, not pretraining: far fewer steps at the low lr in flow_mile.yaml (1e-5).
+  num_offline_steps: 20_000
+  load_dir: null            # REQUIRED: the flow pretraining run that collected this dataset
+  checkpoint: null          # which checkpoints/<step> to load (null = latest)
+  continue_training: false  # ignored for MILE: load_dir is the fine-tuning source, not a resume
+  save_interval: 2000
+  seed: 0
+  use_image_transforms: false
+  # Must match the pretraining run: the actor was trained on z-scored low-dim obs.
+  normalize_lowdim_obs: true
+
+# MILE draws Monte-Carlo action chunks through the Euler ODE sampler every step (for the probit
+# baseline, the marginal, and the anchor loss), so it is much heavier per step than plain flow
+# matching. batch_size 64 is already at the limit for 3x 224x224 cameras on a 24 GB GPU.
+offline_algorithm:
+  batch_size: 32
+  monte_carlo_samples: 10
+  mc_num_inference_steps: 10
+
+# Logging configuration
+logging:
+  wandb_project: mile_dp
+  wandb_entity: tri
+  wandb_offline: false
+  wandb_log_dir_base: logs/wandb
+  wandb_name: "train_flow_mile_yam"
+  log_level: "INFO"
+
+# Algorithm configuration
+alg:
+  offline_alg_name: flow_mile
+
+# Evaluation configuration
+eval:
+  eval_freq: null  # no simulator -> no rollout evaluation
+  eval_num_episodes: 0
+  eval_record_video: false
+  eval_on_first_step: false
+
+# Model configuration. These must match the pretraining run: the actor is loaded from its
+# checkpoint, so the image encoder here only shapes the (discarded) placeholder actor.
+model:
+  dinov2_model: null
+  sentence_model: null
+  image_encoder:
+    type: impala  # null | impala | resnet | dinov2 | vit
+    finetune: true
+    image_feature_dim: 128
+    resnet_backbone: ResNet18
+    resnet_pretrained: true
+    resnet_pool: spatial_softmax
+    spatial_softmax_num_kp: 32
+    impala_nn_scale: 1
+    impala_num_blocks_per_stack: 2
+    impala_use_smaller: false
+    impala_output_dim: null
+    vit_model: google/vit-base-patch16-224-in21k
+    vit_processor: null
+    vit_pool: cls
+    vit_image_size: null
+    vit_projection_dim: null
