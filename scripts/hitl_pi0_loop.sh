@@ -32,43 +32,46 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # ---- Defaults (mirror hitl_pi0_loop.py) ----
-ROUNDS=""
-TASK_IDS=""                       # space-separated, e.g. "57 58 59"
+ROUNDS="2"
+TASK_IDS="57 58"                       # space-separated, e.g. "57 58 59"
 ENV_NAME="libero_90"
-COLLECT_NUM_ROLLOUTS=10
-NUM_TRAIN_STEPS=3000
+COLLECT_NUM_ROLLOUTS=2
+NUM_TRAIN_STEPS=10
 EVAL_CONFIG="libero_eval"
-EVAL_NUM_EPISODES=20
+EVAL_NUM_EPISODES=2
 NO_EVAL=false
-REPO_ID_PREFIX=""                 # HF repo id prefix (namespace/name); round R -> <prefix>_r{R}
-EXP_PREFIX=""
+REPO_ID_PREFIX="ykorkmaz/libero_ec2_test"                 # HF repo id prefix (namespace/name); round R -> <prefix>_r{R}
+EXP_PREFIX="libero_ec2_test"
 TRAIN_CONFIG="pi05_libero_hitl_lora"
 COLLECT_CONFIG="libero_collect_hitl"
 BASE_PI0_CHECKPOINT="gs://openpi-assets/checkpoints/pi05_libero/"
 BASE_PI0_CONFIG_NAME=""
 INIT_WEIGHTS="gs://openpi-assets/checkpoints/pi05_libero/params"
 BASE_DEMOS=""                     # space-separated glob(s)
-LIBERO_BASE_SUITE=""
+LIBERO_BASE_SUITE="libero_90"
 LIBERO_BASE_TASK_IDS=""           # space-separated; default = TASK_IDS
-LIBERO_BASE_NUM_DEMOS=10
-WORKDIR="$REPO_ROOT/outputs/hitl_pi0_loop"
+LIBERO_BASE_NUM_DEMOS=2
+WORKDIR="$REPO_ROOT/outputs/libero_ec2_test"
 OPENPI_DIR="$REPO_ROOT/third_party/dsrl_openpi"
 LOCAL_CKPT_BASE=""                # default <OPENPI_DIR>/checkpoints
 LEROBOT_HOME=""                   # local LeRobot cache root; default ${HF_LEROBOT_HOME:-~/.cache/huggingface/lerobot}
-REMOTE_LEROBOT_HOME=""            # EC2 LeRobot cache root; default = same path as local (--remote-lerobot-home to override)
+REMOTE_LEROBOT_HOME="/opt/dlami/nvme/cache/huggingface/lerobot"            # EC2 LeRobot cache root; default = same path as local (--remote-lerobot-home to override)
+REMOTE_OPENPI_DATA_HOME="/opt/dlami/nvme/cache/openpi"
+REMOTE_UV_CACHE_DIR="/opt/dlami/nvme/cache/uv"
 WEIGHT_LOADER_FLAG="--weight-loader.params-path"
 XLA_MEM=0.9
 START_ROUND=0
 DRY=false
 
 # ---- Remote / SSH ----
-EC2_HOST=""                       # user@host  (required unless --dry-run)
-EC2_REPO=""                       # repo path on EC2 (required unless --dry-run)
-REMOTE_OPENPI_DIR=""              # default <EC2_REPO>/third_party/dsrl_openpi
+EC2_HOST="ubuntu@10.161.57.202"                       # user@host  (required unless --dry-run)
+EC2_REPO="/opt/dlami/nvme/robometer-policy-learning"                       # repo path on EC2 (required unless --dry-run)
+REMOTE_OPENPI_DIR="$EC2_REPO/third_party/dsrl_openpi"              # default <EC2_REPO>/third_party/dsrl_openpi
 REMOTE_CKPT_BASE=""               # default <REMOTE_OPENPI_DIR>/checkpoints
-SSH_KEY=""
+SSH_KEY="$HOME/.ssh/yigit.pem"
 SSH_OPTS=""
 HF_TOKEN=""
+WANDB_API_KEY="${WANDB_API_KEY:-}"
 
 usage() { sed -n '2,40p' "${BASH_SOURCE[0]}"; exit "${1:-0}"; }
 
@@ -99,6 +102,8 @@ while [[ $# -gt 0 ]]; do
     --local-ckpt-base) LOCAL_CKPT_BASE="$2"; shift 2;;
     --lerobot-home) LEROBOT_HOME="$2"; shift 2;;
     --remote-lerobot-home) REMOTE_LEROBOT_HOME="$2"; shift 2;;
+    --remote-openpi-data-home) REMOTE_OPENPI_DATA_HOME="$2"; shift 2;;
+    --remote-uv-cache-dir) REMOTE_UV_CACHE_DIR="$2"; shift 2;;
     --weight-loader-flag) WEIGHT_LOADER_FLAG="$2"; shift 2;;
     --xla-mem-fraction) XLA_MEM="$2"; shift 2;;
     --start-round) START_ROUND="$2"; shift 2;;
@@ -110,6 +115,7 @@ while [[ $# -gt 0 ]]; do
     --ssh-key) SSH_KEY="$2"; shift 2;;
     --ssh-opts) SSH_OPTS="$2"; shift 2;;
     --hf-token) HF_TOKEN="$2"; shift 2;;
+    --wandb-api-key) WANDB_API_KEY="$2"; shift 2;;
     -h|--help) usage 0;;
     *) echo "Unknown arg: $1" >&2; usage 1;;
   esac
@@ -144,6 +150,8 @@ RSH="ssh"; [[ -n "$SSH_KEY" ]] && RSH="ssh -i $SSH_KEY"
 # HF token exported to remote (and, if given, to local) so private-dataset download/push works.
 REMOTE_HF_ENV=""; [[ -n "$HF_TOKEN" ]] && REMOTE_HF_ENV="HF_TOKEN=$HF_TOKEN HUGGING_FACE_HUB_TOKEN=$HF_TOKEN "
 [[ -n "$HF_TOKEN" ]] && export HF_TOKEN HUGGING_FACE_HUB_TOKEN="$HF_TOKEN"
+REMOTE_WANDB_ENV=""; [[ -n "$WANDB_API_KEY" ]] && REMOTE_WANDB_ENV="WANDB_API_KEY=$WANDB_API_KEY "
+TRAIN_WANDB_FLAG="--wandb-enabled=false"; [[ -n "$WANDB_API_KEY" ]] && TRAIN_WANDB_FLAG=""
 
 # ---- Runners ----
 run_local() {  # run_local <cwd> <cmd...>
@@ -153,11 +161,13 @@ run_local() {  # run_local <cwd> <cmd...>
   ( cd "$cwd" && "$@" ) || { echo "LOCAL step failed: $*" >&2; exit 1; }
 }
 run_remote() {  # run_remote <remote-shell-command-string>
-  local shown="$1"
+  local cmd="export PATH=\"\$HOME/.local/bin:\$PATH\"; $1"
+  local shown="$cmd"
   [[ -n "$HF_TOKEN" ]] && shown="${shown//$HF_TOKEN/<HF_TOKEN>}"  # never echo the token
+  [[ -n "$WANDB_API_KEY" ]] && shown="${shown//$WANDB_API_KEY/<WANDB_API_KEY>}"
   printf '\n$ [EC2 %s] %s\n\n' "${EC2_HOST:-<host>}" "$shown"
   $DRY && return 0
-  "${SSH[@]}" "$1" || { echo "REMOTE step failed" >&2; exit 1; }
+  "${SSH[@]}" "$cmd" || { echo "REMOTE step failed" >&2; exit 1; }
 }
 capture_remote() { "${SSH[@]}" "$1"; }  # stdout only, for resolving the step dir
 
@@ -227,15 +237,15 @@ for (( r=START_ROUND; r<ROUNDS; r++ )); do
   fi
 
   # 3) [EC2] compute norm stats (reads the rsync'd dataset via HF_LEROBOT_HOME).
-  run_remote "cd '$REMOTE_OPENPI_DIR' && ${REMOTE_HF_ENV}HF_LEROBOT_HOME='$REMOTE_LEROBOT_HOME' \
+  run_remote "cd '$REMOTE_OPENPI_DIR' && ${REMOTE_HF_ENV}HF_LEROBOT_HOME='$REMOTE_LEROBOT_HOME' OPENPI_DATA_HOME='$REMOTE_OPENPI_DATA_HOME' UV_CACHE_DIR='$REMOTE_UV_CACHE_DIR' \
 XLA_PYTHON_CLIENT_MEM_FRACTION=$XLA_MEM \
 uv run --frozen python scripts/compute_norm_stats.py --config-name $TRAIN_CONFIG --repo-id=$REPO_ID"
 
   # 4) [EC2] LoRA fine-tune, initialized from REMOTE_INIT (base for r0, else prev round's EC2 ckpt).
-  run_remote "cd '$REMOTE_OPENPI_DIR' && ${REMOTE_HF_ENV}HF_LEROBOT_HOME='$REMOTE_LEROBOT_HOME' \
+  run_remote "cd '$REMOTE_OPENPI_DIR' && ${REMOTE_HF_ENV}${REMOTE_WANDB_ENV}HF_LEROBOT_HOME='$REMOTE_LEROBOT_HOME' OPENPI_DATA_HOME='$REMOTE_OPENPI_DATA_HOME' UV_CACHE_DIR='$REMOTE_UV_CACHE_DIR' \
 XLA_PYTHON_CLIENT_MEM_FRACTION=$XLA_MEM \
 uv run --frozen python scripts/train.py $TRAIN_CONFIG --exp-name=$EXP_NAME --data.repo-id=$REPO_ID \
---num-train-steps=$NUM_TRAIN_STEPS $WEIGHT_LOADER_FLAG=$REMOTE_INIT --overwrite"
+--num-train-steps=$NUM_TRAIN_STEPS $WEIGHT_LOADER_FLAG=$REMOTE_INIT $TRAIN_WANDB_FLAG --overwrite"
 
   # 5) Resolve the fresh EC2 checkpoint, rsync the run dir back to LOCAL, hand it forward.
   REMOTE_RUN_DIR="$REMOTE_CKPT_BASE/$TRAIN_CONFIG/$EXP_NAME"
