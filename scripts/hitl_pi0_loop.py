@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
 """Thin orchestrator for iterative pi0.5 HITL on LIBERO: collect -> export -> norm-stats -> train.
 
-Each round runs four steps as SEPARATE subprocesses (so JAX training and robosuite teleop never share
+Each round runs its steps as SEPARATE subprocesses (so JAX training and robosuite teleop never share
 a process), then hands the freshly fine-tuned checkpoint to the next round's data collection:
 
-  1. collect  (root env):   scripts/collect_hitl_libero_pi0.py  -> round-R corrections HDF5
+  0. eval     (root env):    scripts/eval_pi0_libero.py   -> success rate on the task suite (skip with --no-eval)
+  1. collect  (root env):    scripts/collect_hitl_libero_pi0.py  -> per-task corrections HDF5 (one per task id)
   2. export   (openpi env):  scripts/export_hitl_to_lerobot.py   -> LeRobot repo (all rounds + base demos)
   3. normstats(openpi env):  third_party/dsrl_openpi/scripts/compute_norm_stats.py
   4. train    (openpi env):  third_party/dsrl_openpi/scripts/train.py pi05_libero_hitl_lora (LoRA HG-DAgger)
-  -> resolve the new checkpoint step dir; round R+1 collects with it (config_name=<train config>).
+  -> resolve the new checkpoint step dir; round R+1 evals/collects with it (config_name=<train config>).
+
+Works over a SUITE: pass a list of task ids (--task-ids); each round evals on all of them, collects
+corrections for each, aggregates every task's corrections (plus optional base demos) into one LeRobot
+repo, and trains a single policy. Eval runs at the START of each round, so round 0 measures the base
+policy and later rounds measure the fine-tuned one -- a success-rate curve across rounds.
 
 This is deliberately thin: it shells out with explicit commands (use ``--dry-run`` to print them and
 tune before running). Prerequisites: (a) ``lerobot`` installed in the openpi env (this repo's openpi
@@ -20,10 +26,10 @@ from ``--init-weights``. Aggregate anti-forgetting demos with ``--base-demos`` (
 round's LeRobot repo, since openpi trains a single repo). See [[dp-hgdagger-needs-aggregation]].
 
 Example:
-    uv run python scripts/hitl_pi0_loop.py --rounds 3 --task-id 57 \
-        --collect-num-rollouts 10 --num-train-steps 3000 \
-        --repo-id-prefix yourname/libero_hitl --exp-prefix hitl_t57 \
-        --base-demos 'data/libero_t57_demos.hdf5'
+    uv run python scripts/hitl_pi0_loop.py --rounds 3 --env-name libero_90 --task-ids 57 58 59 \
+        --collect-num-rollouts 5 --num-train-steps 3000 --eval-num-episodes 20 \
+        --repo-id-prefix yourname/libero_hitl --exp-prefix hitl_t575859 \
+        --libero-base-suite libero_90 --libero-base-num-demos 10  --train-config pi05_libero_hitl_lora
 """
 
 import argparse
@@ -59,9 +65,16 @@ def _resolve_ckpt_step_dir(checkpoint_base_dir, config_name, exp_name):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--rounds", type=int, required=True)
-    ap.add_argument("--task-id", type=int, required=True)
-    ap.add_argument("--collect-num-rollouts", type=int, default=10)
+    ap.add_argument("--task-ids", type=int, nargs="+", required=True,
+                    help="Task ids (from --env-name) to run each round: corrections are collected for "
+                         "every task, aggregated into one LeRobot repo, and one policy is trained.")
+    ap.add_argument("--env-name", default="libero_90", help="LIBERO suite for collection/eval.")
+    ap.add_argument("--collect-num-rollouts", type=int, default=10, help="Rollouts collected PER task.")
     ap.add_argument("--num-train-steps", type=int, default=3000)
+    # Per-round evaluation of the current policy on the task suite (round 0 = base policy).
+    ap.add_argument("--eval-config", default="libero_eval")
+    ap.add_argument("--eval-num-episodes", type=int, default=20, help="Eval episodes per task.")
+    ap.add_argument("--no-eval", action="store_true", help="Skip the per-round eval step.")
     ap.add_argument("--repo-id-prefix", required=True, help="LeRobot repo id prefix; round R -> <prefix>_r{R}.")
     ap.add_argument("--exp-prefix", required=True, help="openpi exp_name prefix; round R -> <prefix>_r{R}.")
     ap.add_argument("--train-config", default="pi05_libero_hitl_lora")
@@ -103,42 +116,94 @@ def main():
     init_weights = args.init_weights
     round_hdf5s = []  # accumulate every round's corrections for aggregation
 
+    # Resume: when starting past round 0, reconstruct the rolling state from the previous round's
+    # checkpoint (so round <start_round> evals/collects with it and inits training from it) and
+    # re-accumulate earlier rounds' correction HDF5s for aggregation. Without this, --start-round would
+    # (wrongly) evaluate/collect with the BASE policy and train from base weights.
+    if args.start_round > 0 and not args.dry_run:
+        prev_exp = f"{args.exp_prefix}_r{args.start_round - 1}"
+        prev_step = _resolve_ckpt_step_dir(ckpt_base, args.train_config, prev_exp)
+        collect_ckpt = prev_step
+        collect_cfg_name = args.train_config
+        init_weights = os.path.join(prev_step, "params")
+        for pr in range(args.start_round):
+            for t in args.task_ids:
+                p = os.path.join(args.workdir, f"round_{pr}_task_{t}_rollouts.hdf5")
+                if os.path.exists(p):
+                    round_hdf5s.append(p)
+        print(f"Resuming at round {args.start_round}: eval/collect + train-init from {prev_step}; "
+              f"aggregating {len(round_hdf5s)} prior correction file(s).")
+
+    task_ids_str = "[" + ",".join(str(t) for t in args.task_ids) + "]"
+
     for r in range(args.start_round, args.rounds):
         repo_id = f"{args.repo_id_prefix}_r{r}"
         exp_name = f"{args.exp_prefix}_r{r}"
-        round_hdf5 = os.path.join(args.workdir, f"round_{r}_rollouts.hdf5")
-        round_hdf5s.append(round_hdf5)
         print(f"\n========== HITL ROUND {r} ==========")
 
-        # 1) Collect (root env, hydra overrides).
-        collect_cmd = [
-            "uv", "run", "python", "scripts/collect_hitl_libero_pi0.py",
-            "--config-name", args.collect_config,
-            f"env.task_id={args.task_id}",
-            f"hitl.collect_num_rollouts={args.collect_num_rollouts}",
-            f"hitl.collect_output_path={round_hdf5}",
-            f"pi0.checkpoint={collect_ckpt}",
-        ]
-        if collect_cfg_name:
-            collect_cmd.append(f"pi0.config_name={collect_cfg_name}")
-        _run(collect_cmd, dry=args.dry_run, extra_env=jax_env)
+        # 0) Eval the current policy (round 0 = base) on the whole task suite, for a success-rate
+        # curve across rounds. Root env; hydra.run.dir pins per-round eval_results.json.
+        if not args.no_eval:
+            eval_dir = os.path.join(args.workdir, f"eval_r{r}")
+            eval_cmd = [
+                "uv", "run", "python", "scripts/eval_pi0_libero.py",
+                "--config-name", args.eval_config,
+                f"env.env_name={args.env_name}",
+                f"env.task_ids={task_ids_str}",
+                f"eval.num_episodes={args.eval_num_episodes}",
+                f"pi0.checkpoint={collect_ckpt}",
+                f"hydra.run.dir={eval_dir}",
+            ]
+            if collect_cfg_name:
+                eval_cmd.append(f"pi0.config_name={collect_cfg_name}")
+            _run(eval_cmd, dry=args.dry_run, extra_env=jax_env)
 
-        # openpi-env steps run with a plain `uv run` from third_party/dsrl_openpi. (These used to need
-        # `--frozen` because `pyav` was unresolvable and re-locking bumped torch; both locks regenerate
-        # cleanly now and `uv lock --check` passes, so the flag is no longer required. If you ever run
-        # on a machine with a PARTIAL submodule checkout, set UV_FROZEN=1 instead -- uv validates every
-        # path dependency in the lock, so an un-initialized submodule dir breaks a non-frozen sync.)
+        # 1) Collect corrections for EVERY task in the suite (root env, hydra overrides). One HDF5 per
+        # (round, task); all rounds' HDF5s accumulate for aggregation in the export step.
+        for t in args.task_ids:
+            round_hdf5 = os.path.join(args.workdir, f"round_{r}_task_{t}_rollouts.hdf5")
+            round_hdf5s.append(round_hdf5)
+            collect_cmd = [
+                "uv", "run", "python", "scripts/collect_hitl_libero_pi0.py",
+                "--config-name", args.collect_config,
+                f"env.env_name={args.env_name}",
+                f"env.task_id={t}",
+                f"hitl.collect_num_rollouts={args.collect_num_rollouts}",
+                f"hitl.collect_output_path={round_hdf5}",
+                f"pi0.checkpoint={collect_ckpt}",
+                f"hitl.store_only_human={'true' if args.train_config == 'pi05_libero_hitl_lora' else 'false'}",
+                f"hitl.rollout_pool_size={0 if args.train_config == 'pi05_libero_hitl_lora' else 15}",
+            ]
+            if collect_cfg_name:
+                collect_cmd.append(f"pi0.config_name={collect_cfg_name}")
+            _run(collect_cmd, dry=args.dry_run, extra_env=jax_env)
+
+        # A collection step may legitimately write NO file (e.g. finished early with no interventions
+        # under store_only_human). Only feed HDF5s that actually exist to the exporter so a missing
+        # path never reaches conversion. (In --dry-run the files aren't created, so keep them all for
+        # the printed command.)
+        export_inputs = round_hdf5s if args.dry_run else [p for p in round_hdf5s if os.path.exists(p)]
+        has_base = bool(args.base_demos or args.libero_base_suite)
+        if not export_inputs and not has_base:
+            print(f"Round {r}: no saved corrections and no base demos — skipping export/train.")
+            continue
+
+        # openpi-env steps run with `uv run --frozen` from third_party/dsrl_openpi -- pinning the lock
+        # avoids torch/CUDA churn on re-resolve. (Both locks regenerate cleanly now, so --frozen is a
+        # safe habit rather than a hard requirement; drop it only if you intend to re-lock.)
         # 2) Export/aggregate to a LeRobot repo (openpi env).
         export_cmd = [
-            "uv", "run", "python", os.path.join(REPO_ROOT, "scripts", "export_hitl_to_lerobot.py"),
-            "--inputs", *round_hdf5s,
+            "uv", "run", "--frozen", "python",
+            os.path.join(REPO_ROOT, "scripts", "export_hitl_to_lerobot.py"),
             "--repo-id", repo_id,
         ]
+        if export_inputs:
+            export_cmd += ["--inputs", *export_inputs]
         if args.base_demos:
             export_cmd += ["--base-demos", *args.base_demos]
         if args.libero_base_suite:
-            # Default the base-demo task ids to the task being collected/trained on.
-            lb_task_ids = args.libero_base_task_ids or [args.task_id]
+            # Default the base-demo task ids to the tasks being collected/trained on.
+            lb_task_ids = args.libero_base_task_ids or args.task_ids
             export_cmd += [
                 "--libero-base-suite", args.libero_base_suite,
                 "--libero-base-task-ids", *[str(t) for t in lb_task_ids],
@@ -149,7 +214,7 @@ def main():
         # 3) Norm stats (openpi env). compute_norm_stats takes --config-name + our added --repo-id
         # override (points at this round's exported repo).
         _run(
-            ["uv", "run", "python", "scripts/compute_norm_stats.py",
+            ["uv", "run", "--frozen", "python", "scripts/compute_norm_stats.py",
              "--config-name", args.train_config, f"--repo-id={repo_id}"],
             cwd=args.openpi_dir, dry=args.dry_run, extra_env=jax_env,
         )
@@ -157,7 +222,7 @@ def main():
         # 4) Train (openpi env), initialized from the previous round's params. tyro flags are
         # hyphenated (see openpi README: --exp-name); --data.repo-id overrides the config's repo.
         _run(
-            ["uv", "run", "python", "scripts/train.py", args.train_config,
+            ["uv", "run", "--frozen", "python", "scripts/train.py", args.train_config,
              f"--exp-name={exp_name}", f"--data.repo-id={repo_id}",
              f"--num-train-steps={args.num_train_steps}",
              f"{args.weight_loader_flag}={init_weights}", "--overwrite"],
@@ -173,6 +238,23 @@ def main():
         collect_ckpt = step_dir
         collect_cfg_name = args.train_config  # fine-tuned LoRA arch => explicit config for Pi0Wrapper
         init_weights = os.path.join(step_dir, "params")
+
+    # At the end of all rounds, eval the final policy one more time (unless --no-eval).
+    if not args.no_eval:
+        final_eval_r = args.rounds
+        eval_dir = os.path.join(args.workdir, f"eval_r{final_eval_r}")
+        eval_cmd = [
+            "uv", "run", "python", "scripts/eval_pi0_libero.py",
+            "--config-name", args.eval_config,
+            f"env.env_name={args.env_name}",
+            f"env.task_ids={task_ids_str}",
+            f"eval.num_episodes={args.eval_num_episodes}",
+            f"pi0.checkpoint={collect_ckpt}",
+            f"hydra.run.dir={eval_dir}",
+        ]
+        if collect_cfg_name:
+            eval_cmd.append(f"pi0.config_name={collect_cfg_name}")
+        _run(eval_cmd, dry=args.dry_run, extra_env=jax_env)
 
     print("\nHITL loop complete.")
 

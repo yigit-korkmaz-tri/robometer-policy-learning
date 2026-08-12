@@ -54,13 +54,31 @@ def _demo_sort_key(name: str):
     return (0, int(tail)) if tail.isdigit() else (1, name)
 
 
-def _iter_demos(path, *, default_label):
+def _peek_rollout_shape(paths):
+    """Return the stored rollout-sample pool shape ``(P, H, A)`` from the first HDF5 demo that has a
+    ``rollout_samples`` dataset, or ``None`` if no file carries one (Flow-MILE baseline pools; see
+    collect_hitl_libero_pi0.py). All frames in the exported repo must share this fixed shape."""
+    for path in paths:
+        with h5py.File(path, "r") as f:
+            if "data" not in f:
+                continue
+            for demo in sorted(f["data"].keys(), key=_demo_sort_key):
+                g = f["data"][demo]
+                if "rollout_samples" in g:
+                    return tuple(np.asarray(g["rollout_samples"]).shape[1:])  # (P, H, A)
+    return None
+
+
+def _iter_demos(path, *, default_label, rollout_shape=None, warn_missing_rollout=False):
     """Yield (frames_dict, prompt) per demo in a collection-schema HITL/robomimic HDF5.
 
     frames_dict has arrays: image [N,H,W,3] uint8, wrist_image [N,H,W,3] uint8, state [N,8] f32,
     actions [N,7] f32, intervention [N] int64 (falls back to ``default_label`` if the dataset is
-    absent — e.g. externally-supplied demos with no HITL labels).
+    absent — e.g. externally-supplied demos with no HITL labels). When ``rollout_shape`` (P,H,A) is
+    given, also emits ``rollout_samples`` [N,P,H,A] f32 — the stored Flow-MILE baseline pool, or zeros
+    if this file lacks it (warned once when ``warn_missing_rollout``).
     """
+    warned = False
     with h5py.File(path, "r") as f:
         if "data" not in f:
             raise ValueError(f"{path} has no /data group; not a HITL/robomimic HDF5.")
@@ -81,6 +99,15 @@ def _iter_demos(path, *, default_label):
                 "actions": np.asarray(g["actions"], dtype=np.float32),
                 "intervention": interv,
             }
+            if rollout_shape is not None:
+                if "rollout_samples" in g:
+                    frames["rollout_samples"] = np.asarray(g["rollout_samples"], dtype=np.float32)
+                else:
+                    if warn_missing_rollout and not warned:
+                        print(f"  WARNING: {os.path.basename(path)} has no rollout_samples; zero-filling "
+                              f"{rollout_shape} (label-0 Flow-MILE baselines degrade to zero).")
+                        warned = True
+                    frames["rollout_samples"] = np.zeros((n, *rollout_shape), dtype=np.float32)
             prompt = g.attrs.get("prompt", "")
             if isinstance(prompt, bytes):
                 prompt = prompt.decode()
@@ -131,7 +158,7 @@ def _to_pi0_images(rgb, image_hw, flip):
     return np.stack(out, axis=0)
 
 
-def _iter_libero_demos(datasets_dir, suite, task_ids, num_demos, image_hw, base_label, flip):
+def _iter_libero_demos(datasets_dir, suite, task_ids, num_demos, image_hw, base_label, flip, rollout_shape=None):
     """Yield (frames_dict, prompt) for LIBERO expert demos, converted to pi0 format on the fly.
 
     For each task id: resolve ``<datasets_dir>/<suite>/<TASK_NAME>_demo.hdf5`` via the task map, take
@@ -171,6 +198,10 @@ def _iter_libero_demos(datasets_dir, suite, task_ids, num_demos, image_hw, base_
                     "actions": np.asarray(g["actions"], dtype=np.float32),
                     "intervention": np.full((n,), int(base_label), dtype=np.int64),
                 }
+                if rollout_shape is not None:
+                    # Offline demos (label 2) have no rollout pool; zero-fill (excluded from every
+                    # rollout-sample-dependent term). Keeps the feature fixed-shape across all frames.
+                    frames["rollout_samples"] = np.zeros((n, *rollout_shape), dtype=np.float32)
                 yield frames, str(prompt)
 
 
@@ -195,6 +226,10 @@ def main():
     ap.add_argument("--libero-image-flip", action=argparse.BooleanOptionalAction, default=True,
                     help="Flip LIBERO stored images [::-1,::-1] to pi0 orientation (default on; matches main.py).")
     # ---- Output dataset params ----
+    ap.add_argument("--rollout-pool-size", type=int, default=None,
+                    help="Flow-MILE rollout-sample pool size P. None (default) = auto (infer from the "
+                         "corrections' stored rollout_samples; add the feature only if present). 0 = "
+                         "force OFF (ignore stored pools). >0 = require stored pools of exactly this P.")
     ap.add_argument("--fps", type=int, default=10, help="Dataset fps (pi05_libero uses 10).")
     ap.add_argument("--image-hw", type=int, nargs=2, default=(224, 224), help="Image height width.")
     ap.add_argument("--robot-type", default="panda")
@@ -230,24 +265,42 @@ def main():
         f"Corrections: {len(correction_files)} file(s); base-demo files: {len(base_files)}; LIBERO base: none"
     )
 
+    # Flow-MILE rollout-sample pool shape (P, H, A). Auto-inferred from the corrections unless
+    # --rollout-pool-size 0 forces it off; must be uniform across the whole repo (fixed feature shape).
+    rollout_shape = None if args.rollout_pool_size == 0 else _peek_rollout_shape(correction_files)
+    if rollout_shape is not None and args.rollout_pool_size and args.rollout_pool_size != rollout_shape[0]:
+        sys.exit(f"ERROR: --rollout-pool-size={args.rollout_pool_size} but stored pools have P={rollout_shape[0]}.")
+    if args.rollout_pool_size and args.rollout_pool_size > 0 and rollout_shape is None:
+        sys.exit("ERROR: --rollout-pool-size>0 but no input has a `rollout_samples` dataset "
+                 "(collect with hitl.rollout_pool_size>0 first).")
+    if rollout_shape is not None:
+        print(f"Flow-MILE rollout pool: shape {rollout_shape} (P,H,A) — exporting `rollout_samples` feature.")
+
     h, w = args.image_hw
     output_path = HF_LEROBOT_HOME / args.repo_id
     if output_path.exists():
         print(f"Removing existing dataset at {output_path}")
         shutil.rmtree(output_path)
 
+    features = {
+        "image": {"dtype": "image", "shape": (h, w, 3), "names": ["height", "width", "channel"]},
+        "wrist_image": {"dtype": "image", "shape": (h, w, 3), "names": ["height", "width", "channel"]},
+        "state": {"dtype": "float32", "shape": (8,), "names": ["state"]},
+        "actions": {"dtype": "float32", "shape": (7,), "names": ["actions"]},
+        # Extra per-frame HITL label (0=policy, 1=human, 2=offline). Preserved for Flow-MILE.
+        "intervention": {"dtype": "int64", "shape": (1,), "names": ["intervention"]},
+    }
+    if rollout_shape is not None:
+        # Per-frame frozen-rollout baseline pool (env-space, raw 7-dim; normalized/padded in-loader).
+        features["rollout_samples"] = {
+            "dtype": "float32", "shape": tuple(rollout_shape), "names": ["pool", "horizon", "action"],
+        }
+
     dataset = LeRobotDataset.create(
         repo_id=args.repo_id,
         robot_type=args.robot_type,
         fps=args.fps,
-        features={
-            "image": {"dtype": "image", "shape": (h, w, 3), "names": ["height", "width", "channel"]},
-            "wrist_image": {"dtype": "image", "shape": (h, w, 3), "names": ["height", "width", "channel"]},
-            "state": {"dtype": "float32", "shape": (8,), "names": ["state"]},
-            "actions": {"dtype": "float32", "shape": (7,), "names": ["actions"]},
-            # Extra per-frame HITL label (0=policy, 1=human, 2=offline). Preserved for Flow-MILE.
-            "intervention": {"dtype": "int64", "shape": (1,), "names": ["intervention"]},
-        },
+        features=features,
         image_writer_threads=10,
         image_writer_processes=5,
     )
@@ -255,15 +308,19 @@ def main():
     # Unified list of (description, demo-stream). Each stream yields (frames_dict, prompt).
     streams = []
     for p in correction_files:
-        streams.append((f"corrections:{os.path.basename(p)}", _iter_demos(p, default_label=LABEL_HUMAN)))
+        streams.append((f"corrections:{os.path.basename(p)}",
+                        _iter_demos(p, default_label=LABEL_HUMAN, rollout_shape=rollout_shape,
+                                    warn_missing_rollout=True)))
     for p in base_files:
-        streams.append((f"base:{os.path.basename(p)}", _iter_demos(p, default_label=args.base_label)))
+        streams.append((f"base:{os.path.basename(p)}",
+                        _iter_demos(p, default_label=args.base_label, rollout_shape=rollout_shape)))
     if use_libero:
         streams.append((
             f"libero:{args.libero_base_suite}:{args.libero_base_task_ids}",
             _iter_libero_demos(
                 args.libero_datasets_dir, args.libero_base_suite, args.libero_base_task_ids,
                 args.libero_base_num_demos, (h, w), args.base_label, args.libero_image_flip,
+                rollout_shape=rollout_shape,
             ),
         ))
 
@@ -272,17 +329,18 @@ def main():
         for frames, prompt in stream:
             n = len(frames["actions"])
             for i in range(n):
-                dataset.add_frame(
-                    {
-                        "image": frames["image"][i],
-                        "wrist_image": frames["wrist_image"][i],
-                        "state": frames["state"][i],
-                        "actions": frames["actions"][i],
-                        "intervention": np.asarray([frames["intervention"][i]], dtype=np.int64),
-                        # lerobot >= 0cf8648 takes the task per frame; save_episode() no longer does.
-                        "task": prompt or "libero task",
-                    }
-                )
+                frame = {
+                    "image": frames["image"][i],
+                    "wrist_image": frames["wrist_image"][i],
+                    "state": frames["state"][i],
+                    "actions": frames["actions"][i],
+                    "intervention": np.asarray([frames["intervention"][i]], dtype=np.int64),
+                    # lerobot >= 0cf8648 takes the task per frame; save_episode() no longer does.
+                    "task": prompt or "libero task",
+                }
+                if rollout_shape is not None:
+                    frame["rollout_samples"] = np.asarray(frames["rollout_samples"][i], dtype=np.float32)
+                dataset.add_frame(frame)
             dataset.save_episode()
             n_demos += 1
             n_frames += n

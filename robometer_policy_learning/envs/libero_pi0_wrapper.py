@@ -32,6 +32,7 @@ class LiberoPI0Wrapper(gym.Wrapper):
     def __init__(
         self,
         env,
+        language_instruction: Optional[str] = None,
     ):
         """
         Initialize LIBERO wrapper.
@@ -57,7 +58,7 @@ class LiberoPI0Wrapper(gym.Wrapper):
         # Task metadata (set during reset)
         self.task_id = None
         self.task_suite = None
-        self.language_instruction = None
+        self.language_instruction = language_instruction
 
         print(f"✓ LIBERO Pi0 Wrapper initialized")
 
@@ -72,8 +73,9 @@ class LiberoPI0Wrapper(gym.Wrapper):
         # Reset base environment
         raw_obs, _ = self.env.reset()
 
-        # Get language instruction
-        self.language_instruction = self.env.language_instruction
+        # Some LIBERO env instances do not expose language_instruction; keep the
+        # task language supplied by setup_libero_env in that case.
+        self.language_instruction = getattr(self.env, "language_instruction", None) or self.language_instruction
 
         # Convert to Pi0 format
         obs = preprocess_obs_for_pi0(raw_obs)

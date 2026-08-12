@@ -85,6 +85,7 @@ class Pi0LiberoHitlWorker:
         *,
         action_exec_len: int = 20,
         store_only_human: bool = False,
+        rollout_pool_size: int = 0,
         enable_render: bool = True,
         teleop_device: str = "keyboard",
         takeover_key: str = "tab",
@@ -104,6 +105,15 @@ class Pi0LiberoHitlWorker:
         self.action_dim = int(action_dim)
         self.action_exec_len = max(1, int(action_exec_len))
         self.store_only_human = bool(store_only_human)
+        # Flow-MILE: if >0, precompute this many rollout-policy action chunks (a frozen baseline pool)
+        # ONLY at HUMAN-intervened states -- that is the only place the pool feeds the Flow-MILE loss
+        # (label-1 rows' observed_probs baseline; label-0 rows use the logged robot score, label-2 is
+        # masked out). Policy/other frames are zero-filled so the stored array stays fixed-shape.
+        self.rollout_pool_size = max(0, int(rollout_pool_size))
+        # Horizon used to shape the zero-filled non-human baseline pools. Prefer the policy's
+        # advertised `action_horizon`; if it's missing/None we resolve it lazily at collection
+        # time from an actual sampled chunk (see `_resolve_rollout_horizon`).
+        self._rollout_horizon = getattr(self.pi0, "action_horizon", None)
         self.cmd_eps = float(cmd_eps)
         self.enable_render = bool(enable_render)
 
@@ -225,6 +235,33 @@ class Pi0LiberoHitlWorker:
         result = self.pi0.infer(observations=obs, noise=None)
         actions = np.asarray(result["actions"], dtype=np.float32)
         return actions.reshape(-1, self.action_dim)
+
+    def _pi0_pool(self, stored_obs, prompt) -> np.ndarray:
+        """Draw ``rollout_pool_size`` rollout-policy action chunks for one stored state.
+
+        Returns ``[P, H, action_dim]`` env-space float32 -- P independent plain flow-sampling draws
+        (fresh x0 each call) from the CURRENT collection policy. Flow-MILE's frozen-rollout baseline is
+        precomputed here at collection time so training can read the stored pool instead of keeping a
+        resident copy of the rollout policy and sampling it every step (see
+        scripts/export_hitl_to_lerobot.py and third_party/dsrl_openpi/scripts/train.py _flow_mile_grads).
+        """
+        obs = {**stored_obs, "prompt": prompt}
+        chunks = [self._pi0_chunk(obs) for _ in range(self.rollout_pool_size)]
+        pool = np.stack(chunks, axis=0).astype(np.float32)  # [P, H, action_dim]
+        if self._rollout_horizon is None:
+            self._rollout_horizon = int(pool.shape[1])
+        return pool
+
+    def _resolve_rollout_horizon(self, obs) -> int:
+        """Return the rollout action-chunk horizon, deriving it lazily when needed.
+
+        Prefers the policy's advertised ``action_horizon``; if that is unavailable, samples one
+        pi0 chunk from ``obs`` (shape ``[H, action_dim]``) and caches ``H`` so the zero-filled
+        non-human baseline pools match the real sampled pools.
+        """
+        if self._rollout_horizon is None:
+            self._rollout_horizon = int(self._pi0_chunk(obs).shape[0])
+        return self._rollout_horizon
 
     def _teleop_action(self):
         """Block until the human issues a deliberate teleop command; return it (env-space) or None.
@@ -396,6 +433,18 @@ class Pi0LiberoHitlWorker:
                 prompt = _prompt_str(obs)
                 for t in pending:
                     t["prompt"] = prompt
+                    # Flow-MILE: the frozen-rollout baseline pool is only consumed for HUMAN (label-1)
+                    # states, so sample it (env-space [P, H, action_dim]) only there; zero-fill every
+                    # other frame to keep the per-demo array fixed-shape. Done once per kept episode.
+                    if self.rollout_pool_size > 0:
+                        if int(t["intervention"]) == INTERVENTION_LABEL:
+                            t["rollout_samples"] = self._pi0_pool(t["obs"], prompt)
+                        else:
+                            horizon = self._resolve_rollout_horizon(t["obs"])
+                            t["rollout_samples"] = np.zeros(
+                                (self.rollout_pool_size, horizon, self.action_dim),
+                                dtype=np.float32,
+                            )
                 self.collected_episodes.append(pending)
                 stored, kept = len(pending), True
 

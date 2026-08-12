@@ -10,13 +10,13 @@ defaults:
   - _self_
 
 debug: false
-seed: 0
+seed: null
 
 # LIBERO task (see robometer_policy_learning/configs/dsrl_libero_config.yaml for suite/task ids).
 env:
   env_name: "libero_90"
   task_id: 57
-  max_episode_steps: 1000
+  max_episode_steps: 800
   image_keys: ["observation/image"]
 
 # pi0 / pi0.5 data-collection policy.
@@ -32,13 +32,19 @@ pi0:
 
 hitl:
   store_only_human: false          # false = store all steps; true = store only human corrections
+  # Flow-MILE only: precompute this many rollout-policy action chunks (the frozen baseline pool) so
+  # training reads them instead of keeping/sampling the rollout policy on GPU. Sampled ONLY at
+  # human-intervened states (the only place the pool feeds the loss); policy frames are zero-filled.
+  # 0 = off (HG-DAgger / plain collection pays nothing). Must be >= flow_mile.num_samples (K, default
+  # 4). Costs this many extra policy forward passes per human-intervened frame (once per kept episode).
+  rollout_pool_size: 15
 
   # ----- output -----
   collect_num_rollouts: 50         # number of KEPT rollouts to collect
   require_success: true            # keep only successful episodes
   # true => additionally require >= 1 human intervention to keep a rollout; false => keep all
   # (success-filtered) rollouts, intervention-free ones included.
-  keep_only_hitl_rollouts: true
+  keep_only_hitl_rollouts: false
   collect_output_path: null        # output .hdf5 path; null => collect but DO NOT save (dry-run)
 
 # Teleop (keyboard or 3D SpaceMouse) + rendering.

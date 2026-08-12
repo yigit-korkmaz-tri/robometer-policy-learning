@@ -227,6 +227,7 @@ def setup_libero_env(
             base_env = GymToGymnasiumWrapper(base_env, time_limit=max_episode_steps)
             wrapped_env = LiberoPI0Wrapper(
                 base_env,
+                language_instruction=task.language,
             )
 
             # Wrap with async reward relabeling if enabled
@@ -275,13 +276,14 @@ def setup_libero_env(
             # Set metadata
             wrapped_env.task_id = task_id
             wrapped_env.task_suite = task_suite
+            wrapped_env.language_instruction = task.language
 
             return wrapped_env
 
         env_fns.append(make_env)
 
     env = gym.vector.SyncVectorEnv(env_fns)
-    env = VectorLiberoPromptWrapper(env, sentence_model)
+    env = VectorLiberoPromptWrapper(env, sentence_model, language_instruction=task.language)
     # # Create vectorized environment
     # if dinov2_model is not None:
     #     single_space = getattr(env, "single_observation_space", env.observation_space)

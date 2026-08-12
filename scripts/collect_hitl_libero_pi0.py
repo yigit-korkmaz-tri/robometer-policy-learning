@@ -27,9 +27,9 @@ Usage (local machine with a display for the teleop window):
 
 Controls:
   * Keyboard:   Tab = take/release control, wasd/rf + zx/tg/cv to move, space = gripper,
-                q = abort episode, ESC = quit.
+                q = abort episode, ESC = finish collection early (save & exit).
   * SpaceMouse: Tab = take/release control, move/twist the puck to move, left button = gripper,
-                right button = abort episode, ESC = quit.
+                right button = abort episode, ESC = finish collection early (save & exit).
 """
 
 import os
@@ -52,6 +52,7 @@ del jax
 import cv2  # noqa: F401
 
 import json
+import time
 from datetime import datetime
 
 import h5py
@@ -95,6 +96,12 @@ def _write_h5(episodes, output_path, *, action_min, action_max, meta_extra):
             interv = np.asarray([int(t["intervention"]) for t in trs], dtype=np.int64)
             g.create_dataset("intervention", data=interv)
 
+            # Flow-MILE: per-frame frozen-rollout baseline pool [N, P, H, action_dim] (env-space),
+            # precomputed from the collection policy. Present only when hitl.rollout_pool_size > 0.
+            if "rollout_samples" in trs[0]:
+                pool = np.stack([np.asarray(t["rollout_samples"], dtype=np.float32) for t in trs], axis=0)
+                g.create_dataset("rollout_samples", data=pool, compression="gzip")
+
             obs_grp = g.create_group("obs")
             for pi0_key, h5_name in _OBS_KEY_TO_H5.items():
                 if pi0_key not in trs[0]["obs"]:
@@ -130,7 +137,13 @@ def main(cfg: DictConfig):
     output_dir = HydraConfig.get().runtime.output_dir
     setup_loguru_logging(log_level=OmegaConf.select(cfg, "logging.log_level", default="INFO"), output_dir=output_dir)
 
-    seed = int(OmegaConf.select(cfg, "seed", default=0))
+    # Retrieve seed from config; if None, randomly select it
+    seed = OmegaConf.select(cfg, "seed", default=None)
+    if seed is None:
+        seed = int(time.time_ns() % (1 << 31))
+        logger.info(f"No seed provided, selected seed={seed}")
+    else:
+        seed = int(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
 
@@ -179,6 +192,7 @@ def main(cfg: DictConfig):
         action_dim=action_dim,
         action_exec_len=action_exec_len,
         store_only_human=bool(OmegaConf.select(cfg, "hitl.store_only_human", default=False)),
+        rollout_pool_size=int(OmegaConf.select(cfg, "hitl.rollout_pool_size", default=0)),
         enable_render=bool(OmegaConf.select(cfg, "teleop.enable_render", default=True)),
         teleop_device=str(OmegaConf.select(cfg, "teleop.device", default="keyboard")),
         takeover_key=str(OmegaConf.select(cfg, "teleop.takeover_key", default="tab")),
@@ -200,8 +214,16 @@ def main(cfg: DictConfig):
         f"Collecting {num_target} rollouts (require_success={require_success}, "
         f"keep_only_hitl_rollouts={keep_only_hitl}, store_only_human={worker.store_only_human}) -> {dest}"
     )
+    get_language_instruction = getattr(env, "get_language_instruction", None)
+    task_instruction = get_language_instruction() if callable(get_language_instruction) else getattr(env, "language_instruction", None)
+    logger.info(f"Task Instruction: {task_instruction}")
 
     collected, attempt, num_success = 0, 0, 0
+    # Early finish: press ESC in the teleop window at any time to STOP collecting and save what has
+    # been collected so far. ESC raises KeyboardInterrupt from the worker's render loop, which we catch
+    # here and fall through to the save path below. (The current in-progress rollout is discarded;
+    # completed rollouts are kept.)
+    finished_early = False
     try:
         while collected < num_target:
             steps, human_steps, stored, success = worker.rollout_episode(
@@ -216,10 +238,13 @@ def main(cfg: DictConfig):
                 f"stored={stored} | kept {collected}/{num_target}"
             )
     except KeyboardInterrupt:
-        logger.info("Interrupted; writing what has been collected so far.")
+        finished_early = True
+        logger.info("ESC pressed — finishing collection early; writing what has been collected so far.")
     finally:
         worker.close()
         env.close()
+    if finished_early:
+        logger.info(f"Finished early: kept {collected}/{num_target} target rollouts.")
 
     if not output_path:
         logger.warning(
@@ -232,14 +257,30 @@ def main(cfg: DictConfig):
         logger.warning("No episodes collected; nothing written.")
         return
 
+    # store_only_human keeps only human-correction steps: if no interventions were collected (e.g. an
+    # early finish before any takeover), there is nothing meaningful to save and an empty correction
+    # dataset would break downstream conversion. Skip writing entirely so no file is created (the
+    # orchestrator then simply omits this missing path from the export step).
+    n_human_total = sum(
+        1 for ep in worker.collected_episodes for t in ep if int(t.get("intervention", 0)) == 1
+    )
+    if worker.store_only_human and n_human_total == 0:
+        logger.warning(
+            f"store_only_human=true but no human interventions were collected; not writing "
+            f"{output_path} (empty correction dataset)."
+        )
+        return
+
     meta_extra = {
         "created": datetime.now().isoformat(timespec="seconds"),
         "pi0_checkpoint": str(pi0_checkpoint),
         "env_name": str(cfg.env.env_name),
         "task_id": int(cfg.env.task_id),
+        "seed": int(seed),
         "max_episode_steps": int(cfg.env.max_episode_steps),
         "action_exec_len": action_exec_len,
         "store_only_human": worker.store_only_human,
+        "rollout_pool_size": worker.rollout_pool_size,
         "keep_only_hitl_rollouts": keep_only_hitl,
         "require_success": require_success,
         "obs_are_raw": True,

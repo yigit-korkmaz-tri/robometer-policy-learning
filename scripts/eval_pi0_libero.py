@@ -38,6 +38,7 @@ del jax
 import cv2  # noqa: F401  (video writing; import before torch for consistency with the other scripts)
 
 import json
+import time
 from datetime import datetime
 
 import numpy as np
@@ -108,7 +109,7 @@ def _write_video(frames, path, fps: int = 20):
     logger.info(f"Saved eval video ({len(frames)} frames) to {path}")
 
 
-def _eval_task(pi0_wrapper, env_name, task_id, cfg, device, output_dir) -> dict:
+def _eval_task(pi0_wrapper, env_name, task_id, cfg, device, output_dir, seed: int) -> dict:
     """Build the env for one task, run all episodes, return a metrics dict."""
     env, _ = setup_libero_env(
         task_suite_name=env_name,
@@ -118,7 +119,7 @@ def _eval_task(pi0_wrapper, env_name, task_id, cfg, device, output_dir) -> dict:
         dinov2_processor=None,
         sentence_model=None,
         device=device,
-        seed=int(OmegaConf.select(cfg, "seed", default=0)),
+        seed=seed,
         max_episode_steps=int(cfg.env.max_episode_steps),
         image_keys=list(OmegaConf.select(cfg, "env.image_keys", default=[PI0_IMAGE_KEY])),
     )
@@ -146,6 +147,7 @@ def _eval_task(pi0_wrapper, env_name, task_id, cfg, device, output_dir) -> dict:
 
     return {
         "task_id": int(task_id),
+        "seed": int(seed),
         "language_instruction": language_instruction,
         "num_episodes": num_episodes,
         "num_success": int(np.sum(successes)),
@@ -161,7 +163,13 @@ def main(cfg: DictConfig):
     output_dir = HydraConfig.get().runtime.output_dir
     setup_loguru_logging(log_level=OmegaConf.select(cfg, "logging.log_level", default="INFO"), output_dir=output_dir)
 
-    seed = int(OmegaConf.select(cfg, "seed", default=0))
+    # Retrieve seed from config; if None, randomly select it
+    seed = OmegaConf.select(cfg, "seed", default=None)
+    if seed is None:
+        seed = int(time.time_ns() % (1 << 31))
+        logger.info(f"No seed provided, selected seed={seed}")
+    else:
+        seed = int(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
 
@@ -204,7 +212,7 @@ def main(cfg: DictConfig):
     results = []
     for idx, task_id in enumerate(task_ids):
         logger.info(f"===== [{idx + 1}/{len(task_ids)}] {env_name} task {task_id} =====")
-        r = _eval_task(pi0_wrapper, env_name, task_id, cfg, device, output_dir)
+        r = _eval_task(pi0_wrapper, env_name, task_id, cfg, device, output_dir, seed)
         results.append(r)
         logger.success(
             f"task {task_id} ({r['language_instruction']!r}): success_rate={r['success_rate']:.1%} "
@@ -251,6 +259,7 @@ def main(cfg: DictConfig):
         "task_ids": task_ids,
         "pi0_checkpoint": str(pi0_checkpoint),
         "pi0_config_name": pi0_config_name,
+        "seed": int(seed),
         "num_episodes_per_task": int(cfg.eval.num_episodes),
         "per_task": results,
         "mean_success_rate": overall_sr,

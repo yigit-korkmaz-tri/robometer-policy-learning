@@ -29,7 +29,7 @@ pi0:
 
 eval:
   num_episodes: 20          # episodes per task
-  record_video: false       # save a rollout video for the first video_first_n_episodes of each task
+  record_video: true       # save a rollout video for the first video_first_n_episodes of each task
   video_first_n_episodes: 1
 
 logging:

@@ -21,8 +21,8 @@ A flexible reinforcement \ imitation learning framework supporting multiple algo
 
 ### Prerequisites
 
-- Git
-- Python 3.10+
+- Git (with Git LFS)
+- Python 3.11 (the project pins `requires-python = "==3.11.*"`)
 - NVIDIA Drivers (for GPU support)
 
 ### Installation
@@ -32,18 +32,22 @@ A flexible reinforcement \ imitation learning framework supporting multiple algo
    # On macOS and Linux
    curl -LsSf https://astral.sh/uv/install.sh | sh
   ```
-2. **Clone and setup submodules (required for DSRL/LIBERO):**
+2. **Clone and set up submodules (required for openpi/Pi0, LIBERO, robometer):**
   ```bash
-   git submodule init
-   git submodule update --recursive
+   git submodule update --init --recursive
   ```
-3. **Create and sync the virtual environment:**
-  ```bash
-   # Install dependencies from pyproject.toml
-   uv sync
+   Submodules live under `third_party/` (see `.gitmodules`): `dsrl_openpi` (openpi / Pi0·π0.5, tracks
+   branch `hitl-work`), `LIBERO`, and `robometer`. Each is wired as an **editable dependency group**
+   (`[dependency-groups]` + `[tool.uv.sources]` in `pyproject.toml`).
 
-   # Optional: Install with development dependencies
-   uv sync --extra dev
+3. **Create and sync the virtual environment.** A plain `uv sync` installs the default groups —
+   **`openpi` + `libero`** — which is the Pi0 / π0.5, LIBERO, and DSRL / HITL path:
+  ```bash
+   # GIT_LFS_SKIP_SMUDGE=1 avoids Git-LFS smudge errors when pulling LeRobot (an openpi dependency).
+   GIT_LFS_SKIP_SMUDGE=1 uv sync
+
+   # Optional: also install the dev tools (pytest, ruff, pre-commit, ...)
+   GIT_LFS_SKIP_SMUDGE=1 uv sync --extra dev
   ```
 
 **Activate the environment:**
@@ -54,7 +58,15 @@ A flexible reinforcement \ imitation learning framework supporting multiple algo
 
 
 
-**Note that this repo assumes robometer is installed as a git submodule and located at `./third_party/robometer`. If you made any changes to robometer/have your own robometer fork, replace the submodule** 
+**Robometer reward-model path:** the `robometer` group is **mutually exclusive** with `openpi` (they pin
+conflicting `torch` / `datasets` versions), so install it on its own instead of alongside the default
+groups:
+
+```bash
+GIT_LFS_SKIP_SMUDGE=1 uv sync --group robometer --no-default-groups
+```
+
+If you use your own fork of any submodule, update `.gitmodules` and `[tool.uv.sources]` accordingly.
 
 ---
 
