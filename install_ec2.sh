@@ -12,5 +12,7 @@ source ~/.bashrc
 # Update submodules
 git submodule update --init --recursive
 
-# Install dependencies
-GIT_LFS_SKIP_SMUDGE=1 uv sync
+echo "Please open a new terminal and run the following command to install dependencies:"
+echo ""
+echo "GIT_LFS_SKIP_SMUDGE=1 uv sync"
+echo ""
