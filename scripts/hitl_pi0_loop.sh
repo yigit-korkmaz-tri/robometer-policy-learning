@@ -37,6 +37,7 @@ TASK_IDS="57 58"                       # space-separated, e.g. "57 58 59"
 ENV_NAME="libero_90"
 COLLECT_NUM_ROLLOUTS=2
 NUM_TRAIN_STEPS=10
+FSDP_DEVICES=1                         # EC2 train: shard the model across this many GPUs (1 = off)
 EVAL_CONFIG="libero_eval"
 EVAL_NUM_EPISODES=2
 NO_EVAL=false
@@ -59,7 +60,7 @@ REMOTE_LEROBOT_HOME="/opt/dlami/nvme/cache/huggingface/lerobot"            # EC2
 REMOTE_OPENPI_DATA_HOME="/opt/dlami/nvme/cache/openpi"
 REMOTE_UV_CACHE_DIR="/opt/dlami/nvme/cache/uv"
 WEIGHT_LOADER_FLAG="--weight-loader.params-path"
-XLA_MEM=0.9
+XLA_MEM=0.95
 START_ROUND=0
 DRY=false
 
@@ -83,6 +84,7 @@ while [[ $# -gt 0 ]]; do
     --env-name) ENV_NAME="$2"; shift 2;;
     --collect-num-rollouts) COLLECT_NUM_ROLLOUTS="$2"; shift 2;;
     --num-train-steps) NUM_TRAIN_STEPS="$2"; shift 2;;
+    --fsdp-devices) FSDP_DEVICES="$2"; shift 2;;
     --eval-config) EVAL_CONFIG="$2"; shift 2;;
     --eval-num-episodes) EVAL_NUM_EPISODES="$2"; shift 2;;
     --no-eval) NO_EVAL=true; shift;;
@@ -247,7 +249,7 @@ uv run --frozen python scripts/compute_norm_stats.py --config-name $TRAIN_CONFIG
   run_remote "cd '$REMOTE_OPENPI_DIR' && ${REMOTE_HF_ENV}${REMOTE_WANDB_ENV}HF_LEROBOT_HOME='$REMOTE_LEROBOT_HOME' OPENPI_DATA_HOME='$REMOTE_OPENPI_DATA_HOME' UV_CACHE_DIR='$REMOTE_UV_CACHE_DIR' \
 XLA_PYTHON_CLIENT_MEM_FRACTION=$XLA_MEM \
 uv run --frozen python scripts/train.py $TRAIN_CONFIG --exp-name=$EXP_NAME --data.repo-id=$REPO_ID \
---num-train-steps=$NUM_TRAIN_STEPS $WEIGHT_LOADER_FLAG=$REMOTE_INIT $TRAIN_WANDB_FLAG --overwrite"
+--num-train-steps=$NUM_TRAIN_STEPS --fsdp-devices=$FSDP_DEVICES $WEIGHT_LOADER_FLAG=$REMOTE_INIT $TRAIN_WANDB_FLAG --overwrite"
 
   # 5) Resolve the fresh EC2 checkpoint, rsync the run dir back to LOCAL, hand it forward.
   REMOTE_RUN_DIR="$REMOTE_CKPT_BASE/$TRAIN_CONFIG/$EXP_NAME"
