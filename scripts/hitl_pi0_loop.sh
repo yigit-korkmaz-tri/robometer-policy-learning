@@ -51,7 +51,7 @@ BASE_DEMOS=""                     # space-separated glob(s)
 LIBERO_BASE_SUITE="libero_90"
 LIBERO_BASE_TASK_IDS=""           # space-separated; default = TASK_IDS
 LIBERO_BASE_NUM_DEMOS=2
-WORKDIR="$REPO_ROOT/outputs/libero_ec2_test"
+WORKDIR="$REPO_ROOT/outputs"
 OPENPI_DIR="$REPO_ROOT/third_party/dsrl_openpi"
 LOCAL_CKPT_BASE=""                # default <OPENPI_DIR>/checkpoints
 LEROBOT_HOME=""                   # local LeRobot cache root; default ${HF_LEROBOT_HOME:-~/.cache/huggingface/lerobot}
@@ -64,7 +64,7 @@ START_ROUND=0
 DRY=false
 
 # ---- Remote / SSH ----
-EC2_HOST="ubuntu@10.161.57.202"                       # user@host  (required unless --dry-run)
+EC2_HOST="ubuntu@10.161.51.28"                       # user@host  (required unless --dry-run)
 EC2_REPO="/opt/dlami/nvme/robometer-policy-learning"                       # repo path on EC2 (required unless --dry-run)
 REMOTE_OPENPI_DIR="$EC2_REPO/third_party/dsrl_openpi"              # default <EC2_REPO>/third_party/dsrl_openpi
 REMOTE_CKPT_BASE=""               # default <REMOTE_OPENPI_DIR>/checkpoints
@@ -139,6 +139,8 @@ TASK_IDS_CSV="$(echo "$TASK_IDS" | tr -s ' ' ',')"
 [[ -z "$LIBERO_BASE_TASK_IDS" ]] && LIBERO_BASE_TASK_IDS="$TASK_IDS"
 # HG-DAgger (pi05_libero_hitl_lora) trains on corrections only; Flow-MILE needs full trajectories.
 if [[ "$TRAIN_CONFIG" == "pi05_libero_hitl_lora" ]]; then STORE_ONLY_HUMAN=true; else STORE_ONLY_HUMAN=false; fi
+# Append the train config + a run timestamp so each invocation gets its own outputs dir.
+WORKDIR="${WORKDIR}/${TRAIN_CONFIG}_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$WORKDIR"
 
 SSH=(ssh)

@@ -37,6 +37,7 @@ import glob
 import os
 import subprocess
 import sys
+import datetime
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -91,7 +92,7 @@ def main():
     ap.add_argument("--libero-base-task-ids", type=int, nargs="*", default=[],
                     help="Task ids within --libero-base-suite for base demos (default: the eval --task-id).")
     ap.add_argument("--libero-base-num-demos", type=int, default=10, help="Expert demos per task.")
-    ap.add_argument("--workdir", default=os.path.join(REPO_ROOT, "outputs", "hitl_pi0_loop"))
+    ap.add_argument("--workdir", default=os.path.join(REPO_ROOT, "outputs"))
     ap.add_argument("--openpi-dir", default=os.path.join(REPO_ROOT, "third_party", "dsrl_openpi"))
     ap.add_argument("--checkpoint-base-dir", default=None,
                     help="openpi checkpoint_base_dir (default <openpi-dir>/checkpoints).")
@@ -104,8 +105,10 @@ def main():
     ap.add_argument("--start-round", type=int, default=0, help="Resume from this round index.")
     args = ap.parse_args()
 
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     ckpt_base = args.checkpoint_base_dir or os.path.join(args.openpi_dir, "checkpoints")
-    os.makedirs(args.workdir, exist_ok=True)
+    workdir = str(args.workdir) + "/" + args.train_config + "_" + timestamp
+    os.makedirs(workdir, exist_ok=True)
     # Injected into JAX/GPU subprocess steps (collect, norm-stats, train) so JAX can use more GPU
     # memory than its 0.75 default -- the standard openpi OOM fix.
     jax_env = {"XLA_PYTHON_CLIENT_MEM_FRACTION": str(args.xla_mem_fraction)} if args.xla_mem_fraction and args.xla_mem_fraction > 0 else None
@@ -128,7 +131,7 @@ def main():
         init_weights = os.path.join(prev_step, "params")
         for pr in range(args.start_round):
             for t in args.task_ids:
-                p = os.path.join(args.workdir, f"round_{pr}_task_{t}_rollouts.hdf5")
+                p = os.path.join(workdir, f"round_{pr}_task_{t}_rollouts.hdf5")
                 if os.path.exists(p):
                     round_hdf5s.append(p)
         print(f"Resuming at round {args.start_round}: eval/collect + train-init from {prev_step}; "
@@ -144,7 +147,7 @@ def main():
         # 0) Eval the current policy (round 0 = base) on the whole task suite, for a success-rate
         # curve across rounds. Root env; hydra.run.dir pins per-round eval_results.json.
         if not args.no_eval:
-            eval_dir = os.path.join(args.workdir, f"eval_r{r}")
+            eval_dir = os.path.join(workdir, f"eval_r{r}")
             eval_cmd = [
                 "uv", "run", "python", "scripts/eval_pi0_libero.py",
                 "--config-name", args.eval_config,
@@ -161,7 +164,7 @@ def main():
         # 1) Collect corrections for EVERY task in the suite (root env, hydra overrides). One HDF5 per
         # (round, task); all rounds' HDF5s accumulate for aggregation in the export step.
         for t in args.task_ids:
-            round_hdf5 = os.path.join(args.workdir, f"round_{r}_task_{t}_rollouts.hdf5")
+            round_hdf5 = os.path.join(workdir, f"round_{r}_task_{t}_rollouts.hdf5")
             round_hdf5s.append(round_hdf5)
             collect_cmd = [
                 "uv", "run", "python", "scripts/collect_hitl_libero_pi0.py",
@@ -242,7 +245,7 @@ def main():
     # At the end of all rounds, eval the final policy one more time (unless --no-eval).
     if not args.no_eval:
         final_eval_r = args.rounds
-        eval_dir = os.path.join(args.workdir, f"eval_r{final_eval_r}")
+        eval_dir = os.path.join(workdir, f"eval_r{final_eval_r}")
         eval_cmd = [
             "uv", "run", "python", "scripts/eval_pi0_libero.py",
             "--config-name", args.eval_config,
