@@ -40,12 +40,9 @@ training:
   use_rnn: false  # Use RNN actor and critic
   num_offline_steps: 100_000  # Number of offline training steps
   load_dir: null  # Directory to load RL models from (null for no loading)
-  save_interval: 5000  # Save interval in steps
+  save_interval: 10000  # Save interval in steps
   continue_training: false  # Continue training from the last checkpoint
   seed: 0  # Random seed for training
-  # Augmentation would help a lot with only a handful of demos, but it runs per transition in
-  # numpy over batch*chunk_size*cameras*2 frames: measured 7.7 s/step with it vs 2.8 s/step
-  # without, on 3x 224x224 cameras. Turn it on once throughput is acceptable.
   use_image_transforms: false
   normalize_lowdim_obs: true  # Z-score the 14-d joint state using dataset stats
   # Floor on the per-dim std. The 1e-6 default only avoids division by zero: on this dataset the
@@ -53,13 +50,8 @@ training:
   # ~1000 while training saw ~0. 1e-2 rad keeps those dims in a sane range on the real robot.
   lowdim_norm_eps: 1.0e-2
 
-# Three 224x224 cameras are far heavier than the robomimic 84x84 defaults, in both directions:
-# the chunked sampler reads chunk_size timesteps per sample (batch*16*3 cameras*2 for obs+next
-# ~= 6k HDF5 frame reads per step at batch 64, ~0.2 s), and 64*3 frames through a finetuned
-# IMPALA encoder is already most of a 24 GB GPU. batch_size 256 OOMs; raise this only after
-# dropping cameras via env.extra_keys_to_drop or shrinking --image-size.
 offline_algorithm:
-  batch_size: 64
+  batch_size: 128
 
 # Logging configuration
 logging:
@@ -87,14 +79,14 @@ model:
   sentence_model: null  # single-task dataset: no `language` observation key is needed
   # Featurizer-level image encoding (Mode B). Raw uint8 frames flow into the actor's encoder.
   image_encoder:
-    type: impala  # null | impala | resnet | dinov2 | vit
+    type: resnet  # null | impala | resnet | dinov2 | vit
     finetune: true
-    image_feature_dim: 128
+    image_feature_dim: 128  # projection width of the pooled keypoints, per camera
     resnet_backbone: ResNet18
     resnet_pretrained: true
     resnet_pool: spatial_softmax
     spatial_softmax_num_kp: 32
-    impala_nn_scale: 1
+    impala_nn_scale: 1  # IMPALA-only knobs below; ignored by the resnet featurizer
     impala_num_blocks_per_stack: 2
     impala_use_smaller: false
     impala_output_dim: null

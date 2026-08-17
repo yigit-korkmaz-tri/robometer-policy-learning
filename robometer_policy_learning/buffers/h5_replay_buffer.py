@@ -15,6 +15,9 @@ from robometer_policy_learning.buffers.base_replay_buffer import (
     BackgroundSampler,
     BaseReplayBuffer,
     Transition,
+    apply_transforms_batched,
+    batch_transitions,
+    unbatch_transitions,
 )
 from robometer_policy_learning.buffers.samplers import BaseSampler
 
@@ -946,7 +949,12 @@ class H5ReplayBuffer(BaseReplayBuffer):
                 cached_demo = self.hdf5_cache[demo_key]
                 t = m["t"]
                 actual_len = m["episode_len"]
-                is_last = (pos == chunk_size - 1) or m["is_last"]
+                # Only a true episode end aliases next_obs to obs. Treating the last *chunk*
+                # position as terminal too would make the collapsed chunk's next_obs s_{t+T-1}
+                # instead of s_{t+T} (the state reached after executing the whole chunk), which
+                # silently biases TD targets for chunked value learning. Reading it costs one
+                # extra frame per chunk, contiguous with the one already being read.
+                is_last = m["is_last"]
 
                 obs: Dict[str, Any] = {}
                 next_obs: Dict[str, Any] = {}
@@ -1081,14 +1089,7 @@ class H5ReplayBuffer(BaseReplayBuffer):
             return {}
         active_sampler = sampler or self.sampler
         if hasattr(active_sampler, "chunk_size") and hasattr(active_sampler, "_chunk_to_sequence"):
-            # Use efficient batch-based chunked sampling
-            batch = self._sample_chunked_batch_efficient(
-                batch_size,
-                chunk_size=active_sampler.chunk_size,
-                obs_as_sequence=active_sampler.obs_as_sequence,
-                device=device,
-                dtype=dtype,
-            )
+            batch = self._sample_chunked_batch(active_sampler, batch_size, device=device, dtype=dtype)
         else:
             batch = self.sample_batch(batch_size, sampler=active_sampler, device=device, dtype=dtype)
         return self._stamp_sample_weight(batch)
@@ -1114,118 +1115,37 @@ class H5ReplayBuffer(BaseReplayBuffer):
             batch["weight"] = np.full((n,), float(self._sample_weight), dtype=np.float32)
         return batch
 
-    def _sample_chunked_batch_efficient(
-        self, batch_size: int, chunk_size: int, obs_as_sequence: bool, device=None, dtype=None
+    def _sample_chunked_batch(
+        self, sampler: "BaseSampler", batch_size: int, device=None, dtype=None
     ) -> Dict[str, Any]:
-        """
-        Efficient chunked sampling that uses batch operations like sample_batch.
+        """Batch of collapsed action chunks, reading only the images the batch actually keeps.
 
-        Key idea: Sample chunk start indices, expand to all indices in chunks,
-        then use batch_from_indices for efficient data loading.
+        Chunk construction is delegated to the sampler, which goes through
+        :meth:`get_contiguous_chunks_optimized`. That is the only place that knows which timesteps
+        survive the collapse: with ``obs_as_sequence=False`` a chunk contributes one conditioning
+        observation (its first timestep) and one ``next_obs`` (its last), so images are read for
+        those two positions and skipped for the ``chunk_size - 2`` interior ones.
+
+        The previous implementation instead expanded every chunk into ``batch_size * chunk_size``
+        transitions and loaded obs *and* next_obs images for all of them before discarding all but
+        the endpoints -- at chunk_size 16 with two cameras that is 8192 frames read per batch of
+        128 to keep 512, and it dominated the training step (~1.8 s of a ~2.1 s step on a 4090).
+
+        Actions are normalized per transition during chunk construction, so -- unlike
+        :meth:`BaseReplayBuffer.sample` -- ``_normalize_action_batch`` must NOT be applied here.
         """
-        if self.is_empty():
+        transitions = sampler.sample(self, batch_size)
+        if not transitions:
             return {}
 
-        # Build valid chunk starts if needed (same as before)
-        if not hasattr(self, "_valid_chunk_starts") or getattr(self, "_chunk_size_cache", None) != chunk_size:
-            valid_starts = []
-            for episode_id, (start, end) in self._episode_boundaries_index.items():
-                episode_len = end - start + 1
-                if episode_len >= chunk_size:
-                    valid_starts.extend(range(start, end - chunk_size + 2))
-            self._valid_chunk_starts = valid_starts
-            self._chunk_size_cache = chunk_size
+        if self.post_transforms:
+            batched = batch_transitions(transitions)
+            transitions = unbatch_transitions(apply_transforms_batched(batched, self.post_transforms))
 
-        if not self._valid_chunk_starts:
-            return {}
-
-        # Sample chunk start indices
-        num_chunks = min(len(self._valid_chunk_starts), batch_size)
-        import random as _random
-
-        chunk_starts = _random.sample(self._valid_chunk_starts, num_chunks)
-
-        # Expand each start to a chunk: [[start, start+1, ..., start+chunk_size-1], ...]
-        all_indices = []
-        for start in chunk_starts:
-            all_indices.extend(range(start, start + chunk_size))
-
-        # Use the efficient batch_from_indices path (same as sample_batch!)
-        flat_batch = self.batch_from_indices(np.array(all_indices), device=device, dtype=dtype)
-
-        # Reshape from [B*T, ...] to [B, T, ...] format
-        B = num_chunks
-        T = chunk_size
-
-        # Reshape actions: [B*T, action_dim] -> [B, T, action_dim]
-        actions = flat_batch["action"]
-        if isinstance(actions, torch.Tensor):
-            action_shape = actions.shape
-            actions = actions.view(B, T, *action_shape[1:])
-        else:
-            actions = np.array(actions).reshape(B, T, -1)
-            actions = torch.from_numpy(actions).float() if device or dtype else actions
-        # Get gamma from sampler if available (default to 0.99)
-        gamma = self.sampler.gamma
-
-        # For chunked sampling, we aggregate rewards/dones across the chunk
-        rewards = flat_batch["reward"]
-        dones = flat_batch["done"]
-        if isinstance(rewards, torch.Tensor):
-            rewards_reshaped = rewards.view(B, T)
-            dones_reshaped = dones.view(B, T)
-
-            # Apply discount factors: r_t + gamma*r_{t+1} + ... + gamma^{T-1}*r_{t+T-1}
-            discount_factors = torch.tensor(
-                [gamma**i for i in range(T)], dtype=rewards_reshaped.dtype, device=rewards_reshaped.device
-            ).unsqueeze(0)  # Shape: [1, T]
-            reward = (rewards_reshaped * discount_factors).sum(dim=1)  # Discounted sum
-            done = dones_reshaped.any(dim=1)  # Any done in chunk
-        else:
-            rewards_reshaped = np.array(rewards).reshape(B, T)
-            dones_reshaped = np.array(dones).reshape(B, T)
-
-            # Apply discount factors for numpy path
-            discount_factors = np.array([gamma**i for i in range(T)], dtype=np.float32).reshape(1, T)
-            reward = torch.from_numpy((rewards_reshaped * discount_factors).sum(axis=1)).float()
-            done = torch.from_numpy(dones_reshaped.any(axis=1))
-
-        # For obs/next_obs, take first and last of each chunk
-        obs_dict = {}
-        next_obs_dict = {}
-        for key, values in flat_batch["obs"].items():
-            if isinstance(values, torch.Tensor):
-                values_reshaped = values.view(B, T, *values.shape[1:])
-                obs_dict[key] = values_reshaped[:, 0, ...]  # First timestep
-            else:
-                # Handle list or non-stackable case
-                obs_dict[key] = values[::T] if len(values) == B * T else values
-
-        for key, values in flat_batch["next_obs"].items():
-            if isinstance(values, torch.Tensor):
-                values_reshaped = values.view(B, T, *values.shape[1:])
-                next_obs_dict[key] = values_reshaped[:, -1, ...]  # Last timestep
-            else:
-                # Handle list or non-stackable case
-                next_obs_dict[key] = values[T - 1 :: T] if len(values) == B * T else values
-
-        # Preserve each chunk's first-timestep info (e.g. the intervention label) instead of
-        # discarding it; flat_batch["info"] is per-transition (length B*T), chunk i starts at i*T.
-        flat_info = flat_batch.get("info")
-        if isinstance(flat_info, (list, tuple)) and len(flat_info) == B * T:
-            chunk_info = [flat_info[i * T] for i in range(B)]
-        else:
-            chunk_info = [{} for _ in range(B)]
-
-        return {
-            "obs": obs_dict,
-            "action": actions,
-            "reward": reward,
-            "next_obs": next_obs_dict,
-            "done": done,
-            "truncated": torch.zeros_like(done),
-            "info": chunk_info,
-        }
+        batch = self._batch_transitions(transitions)
+        if batch and (device is not None or dtype is not None):
+            batch = self._convert_batch_to_tensors(batch, device, dtype)
+        return batch
 
     def _sample_chunked_batch_fast(self, batch_size: int, chunk_size: int, obs_as_sequence: bool) -> Dict[str, Any]:
         import time

@@ -29,6 +29,18 @@ The dataset is read directly (pyarrow + PyAV/cv2) rather than through ``LeRobotD
 ``lerobot`` is only installed transitively via the ``openpi`` extra and that extra is mutually
 exclusive with ``robometer``. Pass --use-lerobot-api to go through ``LeRobotDataset`` instead.
 
+Both LeRobot layouts are supported and detected from ``meta/info.json``:
+
+* **v2.x** -- one parquet and one MP4 *per episode*; episode/task metadata in ``meta/*.jsonl``.
+* **v3.0** -- episodes are *packed* into shared files: ``data/chunk-{c}/file-{f}.parquet`` holds
+  many episodes' rows (selected by the ``episode_index`` column) and
+  ``videos/{key}/chunk-{c}/file-{f}.mp4`` concatenates many episodes' frames (selected by the
+  ``from_timestamp``/``to_timestamp`` range recorded per episode). Metadata lives in
+  ``meta/episodes/**/*.parquet`` and ``meta/tasks.parquet`` instead of JSONL.
+
+Note that ``--use-lerobot-api`` only works for v2.x: the pinned ``lerobot`` is v2.1-era and its
+``LeRobotDataset`` cannot open a v3.0 dataset.
+
 Usage:
     uv run python scripts/convert_lerobot_to_h5.py \
         --repo-id ykorkmaz/yam_raiden_test \
@@ -99,10 +111,66 @@ def read_jsonl(path: Path) -> List[dict]:
         return [json.loads(line) for line in f if line.strip()]
 
 
+def is_v3(info: dict) -> bool:
+    """True for the v3.0 layout (episodes packed into shared parquet/MP4 files).
+
+    Keyed off ``data_path`` rather than ``codebase_version`` because the path template is what
+    actually changes how the files are read: v2.x formats with ``episode_chunk``/``episode_index``,
+    v3.0 with ``chunk_index``/``file_index``.
+    """
+    return "{chunk_index" in info.get("data_path", "") or str(info.get("codebase_version", "")).startswith("v3")
+
+
+def _read_meta_parquet(paths: List[Path], columns: Optional[List[str]] = None) -> List[dict]:
+    """Read and concatenate v3 metadata parquet shards as a list of row dicts."""
+    rows: List[dict] = []
+    for path in sorted(paths):
+        table = pq.read_table(path)
+        if columns is not None:
+            keep = [c for c in table.column_names if c in columns]
+            table = table.select(keep)
+        rows.extend(table.to_pylist())
+    return rows
+
+
+def load_meta_v3(root: Path, info: dict) -> Tuple[Dict[int, dict], Dict[int, str]]:
+    """v3.0 metadata: meta/episodes/**/*.parquet + meta/tasks.parquet."""
+    episode_files = sorted((root / "meta" / "episodes").rglob("*.parquet"))
+    if not episode_files:
+        raise FileNotFoundError(f"{root}: no meta/episodes/**/*.parquet (expected for a v3.0 dataset)")
+
+    # The episode shards also carry per-episode `stats/...` columns (hundreds of them, several
+    # nesting levels deep). Only the locators are needed, so drop the rest before materializing.
+    wanted_prefixes = ("episode_index", "length", "tasks", "data/", "dataset_from_index", "dataset_to_index", "videos/")
+    columns = [
+        c
+        for c in pq.read_schema(episode_files[0]).names
+        if c.startswith(wanted_prefixes) and not c.startswith("stats/")
+    ]
+    episodes = {int(row["episode_index"]): row for row in _read_meta_parquet(episode_files, columns)}
+
+    tasks: Dict[int, str] = {}
+    tasks_path = root / "meta" / "tasks.parquet"
+    if tasks_path.exists():
+        table = pq.read_table(tasks_path)
+        names = table.column_names
+        task_strings = table.column("task").to_pylist() if "task" in names else []
+        if "task_index" in names:
+            indices = [int(i) for i in table.column("task_index").to_pylist()]
+        else:
+            # Some writers store `task` as the pandas index and drop the explicit column.
+            indices = list(range(len(task_strings)))
+        tasks = dict(zip(indices, task_strings))
+    return episodes, tasks
+
+
 def load_meta(root: Path) -> Tuple[dict, Dict[int, dict], Dict[int, str]]:
     """Return (info, episode_index -> episode record, task_index -> task string)."""
     with open(root / "meta" / "info.json", "r") as f:
         info = json.load(f)
+    if is_v3(info):
+        episodes, tasks = load_meta_v3(root, info)
+        return info, episodes, tasks
     episodes = {int(e["episode_index"]): e for e in read_jsonl(root / "meta" / "episodes.jsonl")}
     tasks = {int(t["task_index"]): t["task"] for t in read_jsonl(root / "meta" / "tasks.jsonl")}
     return info, episodes, tasks
@@ -161,15 +229,46 @@ def _column_to_2d(table, name: str) -> np.ndarray:
     return arr
 
 
-def episode_parquet_path(root: Path, info: dict, episode_index: int) -> Path:
+def episode_parquet_path(root: Path, info: dict, episode_index: int, record: Optional[dict] = None) -> Path:
+    if is_v3(info):
+        if record is None:
+            raise ValueError(f"episode {episode_index}: v3.0 datasets need the meta/episodes record to locate data")
+        rel = info["data_path"].format(
+            chunk_index=int(record["data/chunk_index"]), file_index=int(record["data/file_index"])
+        )
+        return root / rel
     chunk = episode_index // int(info.get("chunks_size", 1000))
     rel = info["data_path"].format(episode_chunk=chunk, episode_index=episode_index)
     return root / rel
 
 
-def load_episode_lowdim(root: Path, info: dict, episode_index: int) -> Tuple[np.ndarray, np.ndarray, int]:
+# v3.0 packs many episodes into one parquet, so the same file is re-read for every episode in it.
+_DATA_TABLE_CACHE: Dict[Path, object] = {}
+
+
+def _read_data_table(path: Path):
+    if path not in _DATA_TABLE_CACHE:
+        # Only one file is kept: episodes are visited in file order, so a single slot is enough and
+        # a full multi-file dataset never accumulates in RAM.
+        _DATA_TABLE_CACHE.clear()
+        _DATA_TABLE_CACHE[path] = pq.read_table(path)
+    return _DATA_TABLE_CACHE[path]
+
+
+def load_episode_lowdim(
+    root: Path, info: dict, episode_index: int, record: Optional[dict] = None
+) -> Tuple[np.ndarray, np.ndarray, int]:
     """Return (state [T,S], action [T,A], task_index) for one episode."""
-    table = pq.read_table(episode_parquet_path(root, info, episode_index))
+    path = episode_parquet_path(root, info, episode_index, record)
+    if is_v3(info):
+        import pyarrow.compute as pc
+
+        full = _read_data_table(path)
+        table = full.filter(pc.equal(full.column("episode_index"), episode_index))
+        if table.num_rows == 0:
+            raise ValueError(f"episode {episode_index}: no rows with episode_index=={episode_index} in {path}")
+    else:
+        table = pq.read_table(path)
     state = _column_to_2d(table, STATE_FEATURE)
     action = _column_to_2d(table, ACTION_FEATURE)
     if len(state) != len(action):
@@ -201,6 +300,34 @@ def iter_video_frames(path: Path, image_size: Optional[int]):
             yield _resize(frame.to_ndarray(format="rgb24"), image_size)
 
 
+def iter_video_frames_range(path: Path, image_size: Optional[int], from_timestamp: float, to_timestamp: float, fps: float):
+    """Yield one episode's frames out of a v3.0 MP4 that concatenates several episodes.
+
+    The episode occupies ``[from_timestamp, to_timestamp)`` of the file. We seek to the keyframe at
+    or before the start (``backward=True``, the PyAV default) and then drop the decoded frames that
+    precede it, which is the only correct way to land on a non-keyframe boundary. Presentation
+    timestamps are compared with a half-frame tolerance so float rounding in the metadata cannot
+    shift the episode by one frame.
+    """
+    import av
+
+    half_frame = 0.5 / float(fps) if fps else 0.0
+    with av.open(str(path)) as container:
+        stream = container.streams.video[0]
+        stream.thread_type = "AUTO"
+        if from_timestamp > 0:
+            container.seek(int(from_timestamp / stream.time_base), stream=stream)
+        for frame in container.decode(stream):
+            if frame.pts is None:
+                continue
+            timestamp = float(frame.pts * stream.time_base)
+            if timestamp < from_timestamp - half_frame:
+                continue
+            if timestamp >= to_timestamp - half_frame:
+                return
+            yield _resize(frame.to_ndarray(format="rgb24"), image_size)
+
+
 def iter_image_files(root: Path, info: dict, feature: str, episode_index: int, image_size: Optional[int]):
     """Yield RGB uint8 frames for LeRobot datasets that store cameras as per-frame image files."""
     template = info.get("image_path", "images/{image_key}/episode_{episode_index:06d}/frame_{frame_index:06d}.png")
@@ -223,9 +350,34 @@ def iter_image_files(root: Path, info: dict, feature: str, episode_index: int, i
         frame_index += 1
 
 
-def open_camera_stream(root: Path, info: dict, feature: str, episode_index: int, image_size: Optional[int]):
+def open_camera_stream(
+    root: Path,
+    info: dict,
+    feature: str,
+    episode_index: int,
+    image_size: Optional[int],
+    record: Optional[dict] = None,
+):
     dtype = info["features"][feature].get("dtype")
     if dtype == "video":
+        if is_v3(info):
+            if record is None:
+                raise ValueError(f"episode {episode_index}: v3.0 datasets need the meta/episodes record to locate videos")
+            rel = info["video_path"].format(
+                video_key=feature,
+                chunk_index=int(record[f"videos/{feature}/chunk_index"]),
+                file_index=int(record[f"videos/{feature}/file_index"]),
+            )
+            path = root / rel
+            if not path.exists():
+                raise FileNotFoundError(f"Missing video for {feature} episode {episode_index}: {path}")
+            return iter_video_frames_range(
+                path,
+                image_size,
+                float(record[f"videos/{feature}/from_timestamp"]),
+                float(record[f"videos/{feature}/to_timestamp"]),
+                float(info.get("fps", 30)),
+            )
         chunk = episode_index // int(info.get("chunks_size", 1000))
         rel = info["video_path"].format(episode_chunk=chunk, video_key=feature, episode_index=episode_index)
         path = root / rel
@@ -233,6 +385,10 @@ def open_camera_stream(root: Path, info: dict, feature: str, episode_index: int,
             raise FileNotFoundError(f"Missing video for {feature} episode {episode_index}: {path}")
         return iter_video_frames(path, image_size)
     if dtype == "image":
+        if is_v3(info):
+            raise ValueError(
+                f"Feature {feature} has dtype 'image' in a v3.0 dataset; only 'video' cameras are supported here."
+            )
         return iter_image_files(root, info, feature, episode_index, image_size)
     raise ValueError(f"Feature {feature} has unsupported dtype {dtype!r} (expected 'video' or 'image').")
 
@@ -295,8 +451,8 @@ def convert(args: argparse.Namespace) -> dict:
     # Pass 1: low-dim data for every episode, so action bounds cover the whole dataset before we
     # start writing (the bounds go into /meta and are read back as the synthesized action space).
     lowdim = {}
-    for episode_index in episode_indices:
-        state, action, task_index = load_episode_lowdim(root, info, episode_index)
+    for episode_index in tqdm(episode_indices, desc="Reading low-dim", unit="ep"):
+        state, action, task_index = load_episode_lowdim(root, info, episode_index, episode_meta.get(episode_index))
         expected = episode_meta.get(episode_index, {}).get("length")
         if expected is not None and int(expected) != len(action):
             raise ValueError(
@@ -362,6 +518,7 @@ def convert(args: argparse.Namespace) -> dict:
                     feature=feature,
                     obs_key=obs_key,
                     episode_index=episode_index,
+                    record=episode_meta.get(episode_index),
                     num_samples=num_samples,
                     image_size=args.image_size,
                     obs_grp=obs_grp,
@@ -417,12 +574,13 @@ def _write_camera(
     obs_grp: h5py.Group,
     next_obs_grp: Optional[h5py.Group],
     compression: Optional[str],
+    record: Optional[dict] = None,
 ):
     """Stream one camera's frames straight into the HDF5, one frame at a time.
 
     Never materializes a full episode of pixels: a 720p episode of 900 frames is ~2.5 GB.
     """
-    frames = open_camera_stream(root, info, feature, episode_index, image_size)
+    frames = open_camera_stream(root, info, feature, episode_index, image_size, record)
     obs_ds = None
     next_ds = None
     previous: Optional[np.ndarray] = None

@@ -1,0 +1,124 @@
+# Flow-matching BC on borueihuang/pusht_intervention_rl_merged (real xarm7 Push-T, LeRobot v3.0).
+#
+# 195 episodes / 28141 transitions @ 30 fps, three 224x224 cameras, 2-d `observation.state`
+# (end-effector x/y in image pixels, ~[0, 512]) and a 2-d absolute-position `action`.
+#
+# Prepare the dataset first (the HDF5 lands at ~12.7 GB uncompressed with all three cameras):
+#   uv run python -c "from huggingface_hub import snapshot_download; \
+#     snapshot_download('borueihuang/pusht_intervention_rl_merged', repo_type='dataset', \
+#     local_dir='~/.cache/huggingface/lerobot/borueihuang/pusht_intervention_rl_merged')"
+#   uv run python scripts/convert_lerobot_to_h5.py \
+#     --repo-id borueihuang/pusht_intervention_rl_merged \
+#     --output data/lerobot_datasets/pusht_intervention_rl_merged.hdf5 \
+#     --image-size 224 \
+#     --camera-map cam0=image,cam2=wrist_image,cam1=overhead_image
+#
+# There is no Push-T simulator in this repo, so `env.offline_only: true` skips make_env and
+# synthesizes the observation/action spaces from the HDF5; rollout evaluation is disabled and
+# progress is read off the training loss (plus the periodic sampled-action MSE below).
+#
+# Mode B (raw images -> the actor's image encoder, trained end to end). Mode A (frozen-DINO
+# precompute) would need the `robometer` extra, which is mutually exclusive with openpi.
+defaults:
+  - algorithm@offline_algorithm: flow  # loads configs/algorithm/flow.yaml into offline_algorithm
+  - reward_model: null                 # demos carry no rewards; nothing to relabel
+
+# Debug mode
+debug: false
+
+# Environment configuration
+env:
+  env_name: "pusht_lerobot"  # informational only: no environment is constructed
+  offline_only: true         # skip simulator construction; derive spaces from h5_dataset_path
+  h5_dataset_path: "data/lerobot_datasets/pusht_intervention_rl_merged.hdf5"
+  max_episode_steps: 400  # unused without an env; kept for schema completeness
+  use_full_state: false   # only affects robosuite envs; the dataset defines the obs keys here
+  use_gt_rewards: true    # no reward model, so the dataset's (sparse terminal) rewards are used as-is
+  # scripts/train_supervised.py does not call configs/register.py, so the structured-config sync
+  # between `image_keys` and `dino_image_keys` never runs: training_utils reads `dino_image_keys`.
+  # Both are set to the same list to stay correct either way. In Mode B (dinov2_model: null) they
+  # are inert -- no key is stripped and no embedding is precomputed.
+  image_keys: ["image", "wrist_image"]
+  dino_image_keys: ["image", "wrist_image"]
+  # cam0 (the angled scene view of the T-block and pusher, renamed `image` as the repo-wide primary
+  # camera) plus cam2 (the wrist close-up). cam1, the overhead view of the block and goal outline,
+  # is still converted into the HDF5 so it can be re-enabled without re-running the converter, but
+  # is dropped from the observation here.
+  extra_keys_to_drop: ["overhead_image"]
+  success_bonus_amount: 0.0
+
+# Training configuration
+training:
+  num_envs: 1  # unused without an env
+  chunk_size: 16  # Flow matching prediction horizon (Tp): #actions sampled jointly (~0.53s at 30fps)
+  n_action_steps: 8  # Actions executed open-loop per predicted chunk before replanning (~0.27s)
+  use_rnn: false
+  num_offline_steps: 100_000
+  load_dir: null
+  save_interval: 5000
+  continue_training: false
+  seed: 0
+  # Off by default: the transform runs per transition in numpy and dominates step time. Worth
+  # turning on for a long run -- 195 episodes of one fixed scene overfit easily.
+  use_image_transforms: false
+  # Z-score the 2-d end-effector state. Essential here: it is in raw pixel units (0-512) while the
+  # actor's other inputs are O(1). Both dims move over the full workspace, so the default epsilon
+  # is enough (no near-constant dim to protect, unlike the bimanual YAM configs).
+  normalize_lowdim_obs: true
+  lowdim_norm_eps: 1.0e-6
+
+offline_algorithm:
+  # Two 224x224 cameras, so a step pushes batch*2 images through the finetuned encoder; VRAM is
+  # the binding constraint on raising this.
+  batch_size: 128
+  # Without a simulator this is the only progress signal beyond the flow-matching loss: every N
+  # updates it runs the Euler sampler on the training batch and logs action MSE vs the demos.
+  # It is expensive (num_inference_steps extra forward passes), hence the low frequency.
+  log_sample_metrics_every: 1000
+
+# Logging configuration
+logging:
+  wandb_project: mile_dp
+  wandb_entity: tri
+  wandb_offline: false
+  wandb_log_dir_base: logs/wandb
+  wandb_name: "train_flow_pusht"
+  log_level: "INFO"
+
+# Algorithm configuration
+alg:
+  offline_alg_name: flow  # Offline algorithm name (iql, bc, sac, dp, flow)
+
+# Evaluation configuration
+eval:
+  eval_freq: null  # no simulator -> no rollout evaluation
+  eval_num_episodes: 0
+  eval_record_video: false
+  eval_on_first_step: false
+
+# Model configuration
+model:
+  dinov2_model: null    # Mode B: no frozen-DINO precompute
+  sentence_model: null  # single task ("Push the T-block into the goal zone"): no `language` key
+  # Featurizer-level image encoding (Mode B). Raw uint8 frames flow into the actor's encoder.
+  # ImageNet-pretrained ResNet18 with spatial-softmax keypoint pooling, finetuned end to end.
+  # Keypoint pooling suits Push-T: the task is about *where* the block and pusher are, and unlike
+  # the IMPALA featurizer (which global-average-pools its last stack) spatial softmax keeps that
+  # position information in the feature vector.
+  image_encoder:
+    type: resnet  # null | impala | resnet | dinov2 | vit
+    finetune: true
+    image_feature_dim: 128  # projection width of the pooled keypoints, per camera
+    resnet_backbone: ResNet18
+    resnet_pretrained: true
+    resnet_pool: spatial_softmax  # spatial_softmax | adaptive_avg | flatten
+    spatial_softmax_num_kp: 32
+    impala_nn_scale: 1  # IMPALA-only knobs below; ignored by the resnet featurizer
+    impala_num_blocks_per_stack: 2
+    impala_use_smaller: false
+    impala_output_dim: null
+    vit_model: google/vit-base-patch16-224-in21k
+    vit_processor: null
+    vit_pool: cls
+    vit_image_size: null
+    vit_projection_dim: null
