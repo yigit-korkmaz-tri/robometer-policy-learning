@@ -80,6 +80,9 @@ def main():
     ap.add_argument("--exp-prefix", required=True, help="openpi exp_name prefix; round R -> <prefix>_r{R}.")
     ap.add_argument("--train-config", default="pi05_libero_hitl_lora")
     ap.add_argument("--collect-config", default="libero_collect_hitl")
+    ap.add_argument("--store-only-human", type=str, default=None,
+                    help="Store only human-correction steps during collection. Default (unset): derived "
+                         "from --train-config (true for pi05_libero_hitl_lora / HG-DAgger, else false).")
     ap.add_argument("--base-pi0-checkpoint", default="gs://openpi-assets/checkpoints/pi05_libero/",
                     help="Round-0 collection policy checkpoint.")
     ap.add_argument("--base-pi0-config-name", default=None,
@@ -104,6 +107,11 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="Print commands without executing.")
     ap.add_argument("--start-round", type=int, default=0, help="Resume from this round index.")
     args = ap.parse_args()
+
+    # When --store-only-human is unset, derive it from the train config.
+    store_only_human = args.store_only_human
+    if store_only_human is None:
+        store_only_human = args.train_config == "pi05_libero_hitl_lora"
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     ckpt_base = args.checkpoint_base_dir or os.path.join(args.openpi_dir, "checkpoints")
@@ -174,7 +182,7 @@ def main():
                 f"hitl.collect_num_rollouts={args.collect_num_rollouts}",
                 f"hitl.collect_output_path={round_hdf5}",
                 f"pi0.checkpoint={collect_ckpt}",
-                f"hitl.store_only_human={'true' if args.train_config == 'pi05_libero_hitl_lora' else 'false'}",
+                f"hitl.store_only_human={str(store_only_human).lower()}",
                 f"hitl.rollout_pool_size={0 if args.train_config == 'pi05_libero_hitl_lora' else 15}",
             ]
             if collect_cfg_name:

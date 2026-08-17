@@ -45,6 +45,7 @@ REPO_ID_PREFIX="ykorkmaz/libero_ec2_test"                 # HF repo id prefix (n
 EXP_PREFIX="libero_ec2_test"
 TRAIN_CONFIG="pi05_libero_hitl_lora"
 COLLECT_CONFIG="libero_collect_hitl"
+STORE_ONLY_HUMAN=""                    # true|false; empty => derive from TRAIN_CONFIG (see below)
 BASE_PI0_CHECKPOINT="gs://openpi-assets/checkpoints/pi05_libero/"
 BASE_PI0_CONFIG_NAME=""
 INIT_WEIGHTS="gs://openpi-assets/checkpoints/pi05_libero/params"
@@ -92,6 +93,7 @@ while [[ $# -gt 0 ]]; do
     --exp-prefix) EXP_PREFIX="$2"; shift 2;;
     --train-config) TRAIN_CONFIG="$2"; shift 2;;
     --collect-config) COLLECT_CONFIG="$2"; shift 2;;
+    --store-only-human) STORE_ONLY_HUMAN="$2"; shift 2;;
     --base-pi0-checkpoint) BASE_PI0_CHECKPOINT="$2"; shift 2;;
     --base-pi0-config-name) BASE_PI0_CONFIG_NAME="$2"; shift 2;;
     --init-weights) INIT_WEIGHTS="$2"; shift 2;;
@@ -140,7 +142,10 @@ fi
 TASK_IDS_CSV="$(echo "$TASK_IDS" | tr -s ' ' ',')"
 [[ -z "$LIBERO_BASE_TASK_IDS" ]] && LIBERO_BASE_TASK_IDS="$TASK_IDS"
 # HG-DAgger (pi05_libero_hitl_lora) trains on corrections only; Flow-MILE needs full trajectories.
-if [[ "$TRAIN_CONFIG" == "pi05_libero_hitl_lora" ]]; then STORE_ONLY_HUMAN=true; else STORE_ONLY_HUMAN=false; fi
+# --store-only-human overrides this; when unset (empty) we derive it from TRAIN_CONFIG as before.
+if [[ -z "$STORE_ONLY_HUMAN" ]]; then
+  if [[ "$TRAIN_CONFIG" == "pi05_libero_hitl_lora" ]]; then STORE_ONLY_HUMAN=true; else STORE_ONLY_HUMAN=false; fi
+fi
 # Append the train config + a run timestamp so each invocation gets its own outputs dir.
 WORKDIR="${WORKDIR}/${TRAIN_CONFIG}_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$WORKDIR"
