@@ -94,7 +94,7 @@ def main():
     ap.add_argument("--libero-base-suite", default=None, help="LIBERO suite for on-the-fly base demos.")
     ap.add_argument("--libero-base-task-ids", type=int, nargs="*", default=[],
                     help="Task ids within --libero-base-suite for base demos (default: the eval --task-id).")
-    ap.add_argument("--libero-base-num-demos", type=int, default=10, help="Expert demos per task.")
+    ap.add_argument("--libero-base-num-demos", type=int, default=0, help="Expert demos per task.")
     ap.add_argument("--workdir", default=os.path.join(REPO_ROOT, "outputs"))
     ap.add_argument("--openpi-dir", default=os.path.join(REPO_ROOT, "third_party", "dsrl_openpi"))
     ap.add_argument("--checkpoint-base-dir", default=None,

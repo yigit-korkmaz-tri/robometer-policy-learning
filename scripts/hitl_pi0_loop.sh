@@ -50,9 +50,9 @@ BASE_PI0_CHECKPOINT="gs://openpi-assets/checkpoints/pi05_libero/"
 BASE_PI0_CONFIG_NAME=""
 INIT_WEIGHTS="gs://openpi-assets/checkpoints/pi05_libero/params"
 BASE_DEMOS=""                     # space-separated glob(s)
-LIBERO_BASE_SUITE="libero_90"
+LIBERO_BASE_SUITE=""
 LIBERO_BASE_TASK_IDS=""           # space-separated; default = TASK_IDS
-LIBERO_BASE_NUM_DEMOS=2
+LIBERO_BASE_NUM_DEMOS=0
 WORKDIR="$REPO_ROOT/outputs"
 OPENPI_DIR="$REPO_ROOT/third_party/dsrl_openpi"
 LOCAL_CKPT_BASE=""                # default <OPENPI_DIR>/checkpoints
@@ -146,6 +146,8 @@ TASK_IDS_CSV="$(echo "$TASK_IDS" | tr -s ' ' ',')"
 if [[ -z "$STORE_ONLY_HUMAN" ]]; then
   if [[ "$TRAIN_CONFIG" == "pi05_libero_hitl_lora" ]]; then STORE_ONLY_HUMAN=true; else STORE_ONLY_HUMAN=false; fi
 fi
+# Flow-MILE precomputes a frozen-rollout baseline pool; HG-DAgger pays nothing (pool off).
+if [[ "$TRAIN_CONFIG" == "pi05_libero_hitl_lora" ]]; then ROLLOUT_POOL_SIZE=0; else ROLLOUT_POOL_SIZE=15; fi
 # Append the train config + a run timestamp so each invocation gets its own outputs dir.
 WORKDIR="${WORKDIR}/${TRAIN_CONFIG}_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$WORKDIR"
@@ -208,7 +210,8 @@ for (( r=START_ROUND; r<ROUNDS; r++ )); do
     COLLECT_CMD=(env XLA_PYTHON_CLIENT_MEM_FRACTION="$XLA_MEM" uv run python scripts/collect_hitl_libero_pi0.py
       --config-name "$COLLECT_CONFIG" "env.env_name=$ENV_NAME" "env.task_id=$t"
       "hitl.collect_num_rollouts=$COLLECT_NUM_ROLLOUTS" "hitl.collect_output_path=$ROUND_HDF5"
-      "pi0.checkpoint=$COLLECT_CKPT" "hitl.store_only_human=$STORE_ONLY_HUMAN")
+      "pi0.checkpoint=$COLLECT_CKPT" "hitl.store_only_human=$STORE_ONLY_HUMAN"
+      "hitl.rollout_pool_size=$ROLLOUT_POOL_SIZE")
     [[ -n "$COLLECT_CFG_NAME" ]] && COLLECT_CMD+=("pi0.config_name=$COLLECT_CFG_NAME")
     run_local "$REPO_ROOT" "${COLLECT_CMD[@]}"
   done
