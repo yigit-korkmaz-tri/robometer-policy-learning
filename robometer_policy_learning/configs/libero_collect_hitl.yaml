@@ -19,6 +19,47 @@ env:
   max_episode_steps: 800
   image_keys: ["observation/image"]
 
+  # ---------------------------------------------------------------------------------------------
+  # LIBERO-plus robustness benchmark (third_party/LIBERO-plus, see docs/LIBERO_PLUS.md).
+  # ---------------------------------------------------------------------------------------------
+  # true => collect corrections on a PERTURBED task from LIBERO-plus instead of the installed LIBERO.
+  # This is the point of the integration for HITL: pi0.5 fails much more often under perturbation, so
+  # corrections collected here target the actual robustness gap. NOTE: libero_spatial / libero_object /
+  # libero_goal / libero_10 then hold only perturbed variants in a different order, so task ids are NOT
+  # comparable to plain LIBERO (libero_90 is identical in both).
+  libero_plus: false
+  # Exact task name, the stable way to pin a LIBERO-plus perturbation (task ids shift if upstream
+  # re-orders). Takes precedence over task_id. Find names with:
+  #   uv run python -c "from robometer_policy_learning.envs.libero_plus import list_tasks; \
+  #     [print(t.task_id, t.category, t.name) for t in list_tasks('libero_spatial', categories='camera')[:20]]"
+  task_name: null
+  # Which benchmark init state to restore at each reset. "auto" = index 0 under LIBERO-plus (required
+  # for its Objects Layout perturbations to take effect) and null under plain LIBERO (robosuite
+  # randomizes placements, the historical behaviour). "cycle" gives each collected rollout a different
+  # benchmark start state -- usually what you want for HITL data diversity. Also accepts an int or
+  # "random".
+  init_state_index: "auto"
+  settle_steps: 10          # no-op steps after restoring an init state so the sim settles
+
+  # ---- Per-episode perturbation sampling ----
+  # Set a perturbation family and env.task_id becomes a BASE task id (0-9, in plain-LIBERO order -- so
+  # task_id=3 means the same task it always did). Every collected rollout then runs a DIFFERENT variant
+  # of that family, so the corrections cover the perturbation family instead of one instance of it.
+  # Every (task, family) cell has 4-50 variants; the env is rebuilt per rollout (~1-2 s), while the
+  # teleop device and window stay open.
+  #
+  # One of: background, camera, language, light, layout, robot, noise (canonical names like
+  # "Camera Viewpoints" work too, as does a list, or "all" to mix every family). null => classic mode,
+  # where env.task_id / env.task_name identify one literal LIBERO-plus variant.
+  perturbation: null
+  variant_sampling: "shuffle"   # shuffle (seeded permutation, no repeats until exhausted) | sequential
+  # Seed for the variant order ONLY (private RNG; never disturbs env/policy seeding). null => a random
+  # seed is drawn per run, logged as "selected variant_seed=N" and stored in the dataset's meta info;
+  # pass that value back in to replay the same perturbation sequence.
+  variant_seed: null
+  variant_difficulty_levels: null   # e.g. [1, 2] -- restrict the pool by difficulty (1 = easiest)
+  variant_name_contains: null       # further substring filter on the variant name
+
 # pi0 / pi0.5 data-collection policy.
 pi0:
   # A path/URI containing "libero" (and "pi05" for pi0.5) so Pi0Wrapper loads the right openpi config.

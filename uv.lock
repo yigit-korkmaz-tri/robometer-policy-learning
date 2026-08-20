@@ -43,7 +43,8 @@ dependencies = [
     { name = "psutil" },
     { name = "pyyaml" },
     { name = "safetensors" },
-    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
+    { name = "torch", version = "2.8.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ca/14/787e5498cd062640f0f3d92ef4ae4063174f76f9afd29d13fc52a319daae/accelerate-1.13.0.tar.gz", hash = "sha256:d631b4e0f5b3de4aff2d7e9e6857d164810dfc3237d54d017f075122d057b236", size = 402835, upload-time = "2026-03-04T19:34:12.359Z" }
 wheels = [
@@ -64,14 +65,14 @@ name = "aiohttp"
 version = "3.14.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "aiohappyeyeballs", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
-    { name = "aiosignal", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
-    { name = "attrs", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
-    { name = "frozenlist", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
-    { name = "multidict", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
-    { name = "propcache", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
-    { name = "typing-extensions", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
-    { name = "yarl", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
+    { name = "aiohappyeyeballs" },
+    { name = "aiosignal" },
+    { name = "attrs" },
+    { name = "frozenlist" },
+    { name = "multidict" },
+    { name = "propcache" },
+    { name = "typing-extensions" },
+    { name = "yarl" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ee/ab/93ce242f899b68c51b0578c027aafa791ab3614cb9345fa5d37b5f5c8e3e/aiohttp-3.14.0.tar.gz", hash = "sha256:2882de819734c715fd1b9c11c97e09fa020d14438203d1d354d8ed1702791c9b", size = 7940674, upload-time = "2026-06-01T19:41:02.763Z" }
 wheels = [
@@ -100,8 +101,8 @@ name = "aiosignal"
 version = "1.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "frozenlist", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
-    { name = "typing-extensions", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
+    { name = "frozenlist" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/61/62/06741b579156360248d1ec624842ad0edf697050bbaf7c3e46394e106ad1/aiosignal-1.4.0.tar.gz", hash = "sha256:f47eecd9468083c2029cc99945502cb7708b082c232f9aca65da147157b251c7", size = 25007, upload-time = "2025-07-03T22:54:43.528Z" }
 wheels = [
@@ -271,7 +272,8 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy", version = "2.1.3", source = { registry = "https://pypi.org/simple" } },
     { name = "packaging" },
-    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
+    { name = "torch", version = "2.8.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d8/7d/f1fe0992334b18cd8494f89aeec1dcc674635584fcd9f115784fea3a1d05/bitsandbytes-0.49.2-py3-none-macosx_14_0_arm64.whl", hash = "sha256:87be5975edeac5396d699ecbc39dfc47cf2c026daaf2d5852a94368611a6823f", size = 131940, upload-time = "2026-02-16T21:26:04.572Z" },
@@ -559,7 +561,7 @@ name = "cryptography"
 version = "48.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cffi", marker = "(platform_python_implementation != 'PyPy' and extra == 'group-25-robometer-policy-learning-openpi') or (platform_python_implementation != 'PyPy' and extra == 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "cffi", marker = "platform_python_implementation != 'PyPy'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/9f/a9/db8f313fdcd85d767d4973515e1db101f9c71f95fced83233de224673757/cryptography-48.0.0.tar.gz", hash = "sha256:5c3932f4436d1cccb036cb0eaef46e6e2db91035166f1ad6505c3c9d5a635920", size = 832984, upload-time = "2026-05-04T22:59:38.133Z" }
 wheels = [
@@ -604,7 +606,8 @@ name = "cut-cross-entropy"
 version = "25.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
+    { name = "torch", version = "2.8.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
     { name = "triton", version = "3.4.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'linux'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/7e/97/45ff09cfcda7b200389204daa0125168e6544fba257adbbcdf728501d4f9/cut_cross_entropy-25.1.1.tar.gz", hash = "sha256:5fe5924509248b1aea5c890f8887c6a7759f7c8b1ebc0490e42c247c4f7c1e34", size = 22972, upload-time = "2025-01-07T12:21:53.896Z" }
@@ -829,11 +832,11 @@ name = "dm-tree"
 version = "0.1.10"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "absl-py", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
-    { name = "attrs", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
+    { name = "absl-py" },
+    { name = "attrs" },
     { name = "numpy", version = "1.26.4", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-25-robometer-policy-learning-openpi'" },
     { name = "numpy", version = "2.1.3", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-25-robometer-policy-learning-robometer'" },
-    { name = "wrapt", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
+    { name = "wrapt" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/5a/66/a3ec619d22b6baffa5ab853e8dc6ec9d0c837127948af59bb15b988d7312/dm_tree-0.1.10.tar.gz", hash = "sha256:22f37b599e01cc3402a17f79c257a802aebd8d326de05b54657650845956208a", size = 35748, upload-time = "2026-03-31T17:35:39.03Z" }
 wheels = [
@@ -1287,11 +1290,11 @@ name = "google-api-core"
 version = "2.30.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "google-auth", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
-    { name = "googleapis-common-protos", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
-    { name = "proto-plus", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
-    { name = "protobuf", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
-    { name = "requests", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
+    { name = "google-auth" },
+    { name = "googleapis-common-protos" },
+    { name = "proto-plus" },
+    { name = "protobuf" },
+    { name = "requests" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/16/ce/502a57fb0ec752026d24df1280b162294b22a0afb98a326084f9a979138b/google_api_core-2.30.3.tar.gz", hash = "sha256:e601a37f148585319b26db36e219df68c5d07b6382cff2d580e83404e44d641b", size = 177001, upload-time = "2026-04-10T00:41:28.035Z" }
 wheels = [
@@ -1325,8 +1328,8 @@ name = "google-auth"
 version = "2.53.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cryptography", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
-    { name = "pyasn1-modules", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
+    { name = "cryptography" },
+    { name = "pyasn1-modules" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c6/ad/ff781329bbbdc0974a098d996e89c9e1f7024262f9e3eec442fbb9ad1ac6/google_auth-2.53.0.tar.gz", hash = "sha256:e7e6aa16f6bee7b2b264830fd04f08087a1d5a836df516251a5d15327b246c9c", size = 335844, upload-time = "2026-05-15T20:53:07.928Z" }
 wheels = [
@@ -1451,7 +1454,7 @@ name = "googleapis-common-protos"
 version = "1.75.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "protobuf", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
+    { name = "protobuf" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/b5/c8/f439cffde755cffa462bfbb156278fa6f9d09119719af9814b858fd4f81f/googleapis_common_protos-1.75.0.tar.gz", hash = "sha256:53a062ff3c32552fbd62c11fe23768b78e4ddf0494d5e5fd97d3f4689c75fbbd", size = 151035, upload-time = "2026-05-07T08:04:49.423Z" }
 wheels = [
@@ -2050,16 +2053,25 @@ wheels = [
 
 [package.optional-dependencies]
 with-cuda = [
-    { name = "nvidia-cublas-cu12", version = "12.8.3.14", source = { registry = "https://pypi.org/simple" } },
-    { name = "nvidia-cuda-cupti-cu12", version = "12.8.57", source = { registry = "https://pypi.org/simple" } },
+    { name = "nvidia-cublas-cu12", version = "12.8.3.14", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "nvidia-cublas-cu12", version = "12.8.4.1", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (platform_machine != 'aarch64' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "nvidia-cuda-cupti-cu12", version = "12.8.57", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "nvidia-cuda-cupti-cu12", version = "12.8.90", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (platform_machine != 'aarch64' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
     { name = "nvidia-cuda-nvcc-cu12" },
-    { name = "nvidia-cuda-runtime-cu12", version = "12.8.57", source = { registry = "https://pypi.org/simple" } },
-    { name = "nvidia-cudnn-cu12", version = "9.7.1.26", source = { registry = "https://pypi.org/simple" } },
-    { name = "nvidia-cufft-cu12", version = "11.3.3.41", source = { registry = "https://pypi.org/simple" } },
-    { name = "nvidia-cusolver-cu12", version = "11.7.2.55", source = { registry = "https://pypi.org/simple" } },
-    { name = "nvidia-cusparse-cu12", version = "12.5.7.53", source = { registry = "https://pypi.org/simple" } },
-    { name = "nvidia-nccl-cu12", version = "2.26.2", source = { registry = "https://pypi.org/simple" } },
-    { name = "nvidia-nvjitlink-cu12", version = "12.8.61", source = { registry = "https://pypi.org/simple" } },
+    { name = "nvidia-cuda-runtime-cu12", version = "12.8.57", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "nvidia-cuda-runtime-cu12", version = "12.8.90", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (platform_machine != 'aarch64' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "nvidia-cudnn-cu12", version = "9.7.1.26", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "nvidia-cudnn-cu12", version = "9.10.2.21", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (platform_machine != 'aarch64' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "nvidia-cufft-cu12", version = "11.3.3.41", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "nvidia-cufft-cu12", version = "11.3.3.83", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (platform_machine != 'aarch64' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "nvidia-cusolver-cu12", version = "11.7.2.55", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "nvidia-cusolver-cu12", version = "11.7.3.90", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (platform_machine != 'aarch64' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "nvidia-cusparse-cu12", version = "12.5.7.53", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "nvidia-cusparse-cu12", version = "12.5.8.93", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (platform_machine != 'aarch64' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "nvidia-nccl-cu12", version = "2.26.2", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "nvidia-nccl-cu12", version = "2.27.3", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (platform_machine != 'aarch64' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "nvidia-nvjitlink-cu12", version = "12.8.61", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "nvidia-nvjitlink-cu12", version = "12.8.93", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (platform_machine != 'aarch64' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
 ]
 
 [[package]]
@@ -2279,6 +2291,18 @@ wheels = [
 ]
 
 [[package]]
+name = "lazy-loader"
+version = "0.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/49/ac/21a1f8aa3777f5658576777ea76bfb124b702c520bbe90edf4ae9915eafa/lazy_loader-0.5.tar.gz", hash = "sha256:717f9179a0dbed357012ddad50a5ad3d5e4d9a0b8712680d4e687f5e6e6ed9b3", size = 15294, upload-time = "2026-03-06T15:45:09.054Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8a/a1/8d812e53a5da1687abb10445275d41a8b13adb781bbf7196ddbcf8d88505/lazy_loader-0.5-py3-none-any.whl", hash = "sha256:ab0ea149e9c554d4ffeeb21105ac60bed7f3b4fd69b1d2360a4add51b170b005", size = 8044, upload-time = "2026-03-06T15:45:07.668Z" },
+]
+
+[[package]]
 name = "lerobot"
 version = "0.1.0"
 source = { git = "https://github.com/huggingface/lerobot?rev=0cf864870cf29f4738d3ade893e6fd13fbd7cdb5#0cf864870cf29f4738d3ade893e6fd13fbd7cdb5" }
@@ -2306,10 +2330,12 @@ dependencies = [
     { name = "pyzmq" },
     { name = "rerun-sdk" },
     { name = "termcolor" },
-    { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
-    { name = "torchcodec", marker = "(platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l' and sys_platform == 'linux') or (platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "torch", version = "2.7.1", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torchcodec", version = "0.5", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l' and sys_platform == 'linux') or (platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "torchvision", version = "0.22.1", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (platform_machine != 'aarch64' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
-    { name = "torchvision", version = "0.22.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine != 'aarch64' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torchvision", version = "0.22.1", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torchvision", version = "0.22.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
     { name = "wandb" },
     { name = "zarr" },
 ]
@@ -2559,7 +2585,8 @@ dependencies = [
     { name = "decorator" },
     { name = "imageio" },
     { name = "imageio-ffmpeg" },
-    { name = "numpy", version = "2.1.3", source = { registry = "https://pypi.org/simple" } },
+    { name = "numpy", version = "1.26.4", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-25-robometer-policy-learning-openpi'" },
+    { name = "numpy", version = "2.1.3", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-25-robometer-policy-learning-robometer' or extra != 'group-25-robometer-policy-learning-openpi'" },
     { name = "pillow" },
     { name = "proglog" },
     { name = "python-dotenv" },
@@ -2853,10 +2880,7 @@ name = "nvidia-cublas-cu12"
 version = "12.8.3.14"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "sys_platform == 'darwin'",
-    "platform_machine == 'aarch64' and sys_platform == 'linux'",
     "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux')",
-    "sys_platform == 'emscripten'",
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ed/63/684a6f72f52671ea222c12ecde9bdf748a0ba025e2ad3ec374e466c26eb6/nvidia_cublas_cu12-12.8.3.14-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:93a4e0e386cc7f6e56c822531396de8170ed17068a1e18f987574895044cd8c3", size = 604900717, upload-time = "2025-01-23T17:52:55.486Z" },
@@ -2870,6 +2894,9 @@ version = "12.8.4.1"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')",
+    "sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
+    "platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
+    "sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
     "extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
 ]
 wheels = [
@@ -2883,10 +2910,7 @@ name = "nvidia-cuda-cupti-cu12"
 version = "12.8.57"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "sys_platform == 'darwin'",
-    "platform_machine == 'aarch64' and sys_platform == 'linux'",
     "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux')",
-    "sys_platform == 'emscripten'",
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fe/53/458956a65283c55c22ba40a65745bbe9ff20c10b68ea241bc575e20c0465/nvidia_cuda_cupti_cu12-12.8.57-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:ff154211724fd824e758ce176b66007b558eea19c9a5135fc991827ee147e317", size = 9526469, upload-time = "2025-01-23T17:47:33.104Z" },
@@ -2900,6 +2924,9 @@ version = "12.8.90"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')",
+    "sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
+    "platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
+    "sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
     "extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
 ]
 wheels = [
@@ -2923,10 +2950,7 @@ name = "nvidia-cuda-nvrtc-cu12"
 version = "12.8.61"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "sys_platform == 'darwin'",
-    "platform_machine == 'aarch64' and sys_platform == 'linux'",
     "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux')",
-    "sys_platform == 'emscripten'",
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d4/22/32029d4583f7b19cfe75c84399cbcfd23f2aaf41c66fc8db4da460104fff/nvidia_cuda_nvrtc_cu12-12.8.61-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl", hash = "sha256:a0fa9c2a21583105550ebd871bd76e2037205d56f33f128e69f6d2a55e0af9ed", size = 88024585, upload-time = "2025-01-23T17:50:10.722Z" },
@@ -2940,6 +2964,9 @@ version = "12.8.93"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')",
+    "sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
+    "platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
+    "sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
     "extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
 ]
 wheels = [
@@ -2953,10 +2980,7 @@ name = "nvidia-cuda-runtime-cu12"
 version = "12.8.57"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "sys_platform == 'darwin'",
-    "platform_machine == 'aarch64' and sys_platform == 'linux'",
     "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux')",
-    "sys_platform == 'emscripten'",
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/cd/9d/e77ec4227e70c6006195bdf410370f2d0e5abfa2dc0d1d315cacd57c5c88/nvidia_cuda_runtime_cu12-12.8.57-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:534ccebd967b6a44292678fa5da4f00666029cb2ed07a79515ea41ef31fe3ec7", size = 965264, upload-time = "2025-01-23T17:47:11.759Z" },
@@ -2970,6 +2994,9 @@ version = "12.8.90"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')",
+    "sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
+    "platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
+    "sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
     "extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
 ]
 wheels = [
@@ -2983,13 +3010,10 @@ name = "nvidia-cudnn-cu12"
 version = "9.7.1.26"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "sys_platform == 'darwin'",
-    "platform_machine == 'aarch64' and sys_platform == 'linux'",
     "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux')",
-    "sys_platform == 'emscripten'",
 ]
 dependencies = [
-    { name = "nvidia-cublas-cu12", version = "12.8.3.14", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-25-robometer-policy-learning-openpi'" },
+    { name = "nvidia-cublas-cu12", version = "12.8.3.14", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c1/2e/ec5dda717eeb1de3afbbbb611ca556f9d6d057470759c6abd36d72f0063b/nvidia_cudnn_cu12-9.7.1.26-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:848a61d40ef3b32bd4e1fadb599f0cf04a4b942fbe5fb3be572ad75f9b8c53ef", size = 725862213, upload-time = "2025-02-06T22:14:57.169Z" },
@@ -3003,10 +3027,13 @@ version = "9.10.2.21"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')",
+    "sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
+    "platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
+    "sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
     "extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
 ]
 dependencies = [
-    { name = "nvidia-cublas-cu12", version = "12.8.4.1", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi') or (extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "nvidia-cublas-cu12", version = "12.8.4.1", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra != 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra != 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform != 'linux' and extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fa/41/e79269ce215c857c935fd86bcfe91a451a584dfc27f1e068f568b9ad1ab7/nvidia_cudnn_cu12-9.10.2.21-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:c9132cc3f8958447b4910a1720036d9eff5928cc3179b0a51fb6d167c6cc87d8", size = 705026878, upload-time = "2025-06-06T21:52:51.348Z" },
@@ -3019,13 +3046,10 @@ name = "nvidia-cufft-cu12"
 version = "11.3.3.41"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "sys_platform == 'darwin'",
-    "platform_machine == 'aarch64' and sys_platform == 'linux'",
     "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux')",
-    "sys_platform == 'emscripten'",
 ]
 dependencies = [
-    { name = "nvidia-nvjitlink-cu12", version = "12.8.61", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-25-robometer-policy-learning-openpi'" },
+    { name = "nvidia-nvjitlink-cu12", version = "12.8.61", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/72/95/6157cb45a49f5090a470de42353a22a0ed5b13077886dca891b4b0e350fe/nvidia_cufft_cu12-11.3.3.41-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:68509dcd7e3306e69d0e2d8a6d21c8b25ed62e6df8aac192ce752f17677398b5", size = 193108626, upload-time = "2025-01-23T17:55:49.192Z" },
@@ -3039,10 +3063,13 @@ version = "11.3.3.83"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')",
+    "sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
+    "platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
+    "sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
     "extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
 ]
 dependencies = [
-    { name = "nvidia-nvjitlink-cu12", version = "12.8.93", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi') or (extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "nvidia-nvjitlink-cu12", version = "12.8.93", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra != 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra != 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform != 'linux' and extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/60/bc/7771846d3a0272026c416fbb7e5f4c1f146d6d80704534d0b187dd6f4800/nvidia_cufft_cu12-11.3.3.83-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:848ef7224d6305cdb2a4df928759dca7b1201874787083b6e7550dd6765ce69a", size = 193109211, upload-time = "2025-03-07T01:44:56.873Z" },
@@ -3107,15 +3134,12 @@ name = "nvidia-cusolver-cu12"
 version = "11.7.2.55"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "sys_platform == 'darwin'",
-    "platform_machine == 'aarch64' and sys_platform == 'linux'",
     "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux')",
-    "sys_platform == 'emscripten'",
 ]
 dependencies = [
-    { name = "nvidia-cublas-cu12", version = "12.8.3.14", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-25-robometer-policy-learning-openpi'" },
-    { name = "nvidia-cusparse-cu12", version = "12.5.7.53", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-25-robometer-policy-learning-openpi'" },
-    { name = "nvidia-nvjitlink-cu12", version = "12.8.61", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-25-robometer-policy-learning-openpi'" },
+    { name = "nvidia-cublas-cu12", version = "12.8.3.14", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "nvidia-cusparse-cu12", version = "12.5.7.53", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "nvidia-nvjitlink-cu12", version = "12.8.61", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8c/ce/4214a892e804b20bf66d04f04a473006fc2d3dac158160ef85f1bc906639/nvidia_cusolver_cu12-11.7.2.55-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:0fd9e98246f43c15bee5561147ad235dfdf2d037f5d07c9d41af3f7f72feb7cc", size = 260094827, upload-time = "2025-01-23T17:58:17.586Z" },
@@ -3129,12 +3153,15 @@ version = "11.7.3.90"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')",
+    "sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
+    "platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
+    "sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
     "extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
 ]
 dependencies = [
-    { name = "nvidia-cublas-cu12", version = "12.8.4.1", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi') or (extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
-    { name = "nvidia-cusparse-cu12", version = "12.5.8.93", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi') or (extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
-    { name = "nvidia-nvjitlink-cu12", version = "12.8.93", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi') or (extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "nvidia-cublas-cu12", version = "12.8.4.1", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra != 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra != 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform != 'linux' and extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer')" },
+    { name = "nvidia-cusparse-cu12", version = "12.5.8.93", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra != 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra != 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform != 'linux' and extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer')" },
+    { name = "nvidia-nvjitlink-cu12", version = "12.8.93", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra != 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra != 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform != 'linux' and extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c8/32/f7cd6ce8a7690544d084ea21c26e910a97e077c9b7f07bf5de623ee19981/nvidia_cusolver_cu12-11.7.3.90-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:db9ed69dbef9715071232caa9b69c52ac7de3a95773c2db65bdba85916e4e5c0", size = 267229841, upload-time = "2025-03-07T01:46:54.356Z" },
@@ -3147,13 +3174,10 @@ name = "nvidia-cusparse-cu12"
 version = "12.5.7.53"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "sys_platform == 'darwin'",
-    "platform_machine == 'aarch64' and sys_platform == 'linux'",
     "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux')",
-    "sys_platform == 'emscripten'",
 ]
 dependencies = [
-    { name = "nvidia-nvjitlink-cu12", version = "12.8.61", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-25-robometer-policy-learning-openpi'" },
+    { name = "nvidia-nvjitlink-cu12", version = "12.8.61", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2e/a2/313db0453087f5324a5900380ca2e57e050c8de76f407b5e11383dc762ae/nvidia_cusparse_cu12-12.5.7.53-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:d869c6146ca80f4305b62e02d924b4aaced936f8173e3cef536a67eed2a91af1", size = 291963692, upload-time = "2025-01-23T17:59:40.325Z" },
@@ -3167,10 +3191,13 @@ version = "12.5.8.93"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')",
+    "sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
+    "platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
+    "sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
     "extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
 ]
 dependencies = [
-    { name = "nvidia-nvjitlink-cu12", version = "12.8.93", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi') or (extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "nvidia-nvjitlink-cu12", version = "12.8.93", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra != 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra != 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform != 'linux' and extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/bc/f7/cd777c4109681367721b00a106f491e0d0d15cfa1fd59672ce580ce42a97/nvidia_cusparse_cu12-12.5.8.93-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:9b6c161cb130be1a07a27ea6923df8141f3c295852f4b260c65f18f3e0a091dc", size = 288117129, upload-time = "2025-03-07T01:47:40.407Z" },
@@ -3210,10 +3237,7 @@ name = "nvidia-nccl-cu12"
 version = "2.26.2"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "sys_platform == 'darwin'",
-    "platform_machine == 'aarch64' and sys_platform == 'linux'",
     "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux')",
-    "sys_platform == 'emscripten'",
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/69/5b/ca2f213f637305633814ae8c36b153220e40a07ea001966dcd87391f3acb/nvidia_nccl_cu12-2.26.2-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:5c196e95e832ad30fbbb50381eb3cbd1fadd5675e587a548563993609af19522", size = 291671495, upload-time = "2025-03-13T00:30:07.805Z" },
@@ -3226,6 +3250,9 @@ version = "2.27.3"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')",
+    "sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
+    "platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
+    "sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
     "extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
 ]
 wheels = [
@@ -3238,10 +3265,7 @@ name = "nvidia-nvjitlink-cu12"
 version = "12.8.61"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "sys_platform == 'darwin'",
-    "platform_machine == 'aarch64' and sys_platform == 'linux'",
     "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux')",
-    "sys_platform == 'emscripten'",
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/03/f8/9d85593582bd99b8d7c65634d2304780aefade049b2b94d96e44084be90b/nvidia_nvjitlink_cu12-12.8.61-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl", hash = "sha256:45fd79f2ae20bd67e8bc411055939049873bfd8fac70ff13bd4865e0b9bdab17", size = 39243473, upload-time = "2025-01-23T18:03:03.509Z" },
@@ -3255,6 +3279,9 @@ version = "12.8.93"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')",
+    "sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
+    "platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
+    "sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
     "extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
 ]
 wheels = [
@@ -3446,7 +3473,8 @@ dependencies = [
     { name = "ml-collections" },
     { name = "numpy", version = "1.26.4", source = { registry = "https://pypi.org/simple" } },
     { name = "numpydantic" },
-    { name = "nvidia-cuda-nvrtc-cu12", version = "12.8.61", source = { registry = "https://pypi.org/simple" } },
+    { name = "nvidia-cuda-nvrtc-cu12", version = "12.8.61", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "nvidia-cuda-nvrtc-cu12", version = "12.8.93", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (platform_machine != 'aarch64' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
     { name = "opencv-python", version = "4.11.0.86", source = { registry = "https://pypi.org/simple" } },
     { name = "openpi-client" },
     { name = "orbax-checkpoint" },
@@ -3454,7 +3482,9 @@ dependencies = [
     { name = "polars" },
     { name = "rich" },
     { name = "sentencepiece" },
-    { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
+    { name = "torch", version = "2.7.1", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torchcodec", version = "0.5", source = { registry = "https://pypi.org/simple" } },
     { name = "tqdm-loggable" },
     { name = "transformers" },
     { name = "treescope" },
@@ -3493,6 +3523,7 @@ requires-dist = [
     { name = "rich", specifier = ">=14.0.0" },
     { name = "sentencepiece", specifier = ">=0.2.0" },
     { name = "torch", specifier = "==2.7.1" },
+    { name = "torchcodec", specifier = "==0.5.*" },
     { name = "tqdm-loggable", specifier = ">=0.2" },
     { name = "transformers", specifier = "==4.53.2" },
     { name = "treescope", specifier = ">=0.1.7" },
@@ -3663,8 +3694,8 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy", version = "1.26.4", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-25-robometer-policy-learning-openpi'" },
     { name = "numpy", version = "2.1.3", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-25-robometer-policy-learning-robometer'" },
-    { name = "python-dateutil", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
-    { name = "tzdata", marker = "(sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "python-dateutil" },
+    { name = "tzdata", marker = "sys_platform == 'emscripten' or sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f8/87/4341c6252d1c47b08768c3d25ac487362bf403f0313ddae4a2a26c9b1b4c/pandas-3.0.3.tar.gz", hash = "sha256:696a4a00a2a2a35d4e5deb3fc946641b96c944f02230e4f76137fe35d806c4fc", size = 4651414, upload-time = "2026-05-11T18:54:29.21Z" }
 wheels = [
@@ -3699,7 +3730,8 @@ dependencies = [
     { name = "psutil" },
     { name = "pyyaml" },
     { name = "safetensors" },
-    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
+    { name = "torch", version = "2.8.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
     { name = "tqdm" },
     { name = "transformers" },
 ]
@@ -3713,7 +3745,7 @@ name = "pexpect"
 version = "4.9.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "ptyprocess" },
+    { name = "ptyprocess", marker = "sys_platform != 'emscripten' or extra != 'group-25-robometer-policy-learning-openpi' or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/42/92/cc564bf6381ff43ce1f4d06852fc19a2f11d180f23dc32d9588bee2f149d/pexpect-4.9.0.tar.gz", hash = "sha256:ee7d41123f3c9911050ea2c2dac107568dc43b2d3b0c7557a33212c398ead30f", size = 166450, upload-time = "2023-11-25T09:07:26.339Z" }
 wheels = [
@@ -3894,7 +3926,7 @@ name = "proto-plus"
 version = "1.28.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "protobuf", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
+    { name = "protobuf" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c9/56/e647b0c675392d2da368da7b6f158f7368b18542fd6f7d7400a2f39de000/proto_plus-1.28.0.tar.gz", hash = "sha256:38e5696342835b08fc116f30a25665b29531cda9d5d5643e9b81fc312385abd9", size = 57221, upload-time = "2026-05-07T08:04:50.811Z" }
 wheels = [
@@ -3979,7 +4011,7 @@ name = "pyasn1-modules"
 version = "0.4.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyasn1", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
+    { name = "pyasn1" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/e9/e6/78ebbb10a8c8e4b61a59249394a4a594c1a7af95593dc933a349c8d00964/pyasn1_modules-0.4.2.tar.gz", hash = "sha256:677091de870a80aae844b1ca6134f54652fa2c8c5a52aa396440ac3106e941e6", size = 307892, upload-time = "2025-03-28T02:41:22.17Z" }
 wheels = [
@@ -4558,9 +4590,11 @@ dependencies = [
     { name = "tensorflow-datasets" },
     { name = "termcolor" },
     { name = "tf-keras" },
-    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
-    { name = "torchcodec" },
-    { name = "torchvision", version = "0.23.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
+    { name = "torch", version = "2.8.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torchcodec", version = "0.7.0", source = { registry = "https://pypi.org/simple" } },
+    { name = "torchvision", version = "0.23.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torchvision", version = "0.23.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
     { name = "tqdm" },
     { name = "unsloth" },
     { name = "uvicorn" },
@@ -4665,6 +4699,7 @@ dependencies = [
     { name = "loguru" },
     { name = "matplotlib" },
     { name = "metaworld" },
+    { name = "moviepy" },
     { name = "numpy", version = "1.26.4", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-25-robometer-policy-learning-openpi'" },
     { name = "numpy", version = "2.1.3", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-25-robometer-policy-learning-robometer' or extra != 'group-25-robometer-policy-learning-openpi'" },
     { name = "omegaconf" },
@@ -4679,11 +4714,15 @@ dependencies = [
     { name = "sentence-transformers" },
     { name = "tensorboard" },
     { name = "thop" },
-    { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'group-25-robometer-policy-learning-openpi'" },
-    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'group-25-robometer-policy-learning-robometer' or extra != 'group-25-robometer-policy-learning-openpi'" },
+    { name = "torch", version = "2.7.1", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torch", version = "2.8.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi') or (extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
     { name = "torchvision", version = "0.22.1", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (platform_machine != 'aarch64' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
-    { name = "torchvision", version = "0.22.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine != 'aarch64' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
-    { name = "torchvision", version = "0.23.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'group-25-robometer-policy-learning-robometer' or extra != 'group-25-robometer-policy-learning-openpi'" },
+    { name = "torchvision", version = "0.22.1", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torchvision", version = "0.22.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torchvision", version = "0.23.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torchvision", version = "0.23.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi') or (extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
     { name = "tqdm" },
     { name = "transformers" },
     { name = "wandb" },
@@ -4705,6 +4744,10 @@ dev = [
 [package.dev-dependencies]
 libero = [
     { name = "libero" },
+]
+libero-plus = [
+    { name = "scikit-image" },
+    { name = "wand" },
 ]
 openpi = [
     { name = "openpi" },
@@ -4740,6 +4783,7 @@ requires-dist = [
     { name = "loguru" },
     { name = "matplotlib", specifier = ">=3.7" },
     { name = "metaworld" },
+    { name = "moviepy", specifier = ">=2.2.1" },
     { name = "numpy", specifier = ">=1.21.0" },
     { name = "omegaconf", specifier = ">=2.3.0" },
     { name = "opencv-python-headless", specifier = ">=4.8.0" },
@@ -4767,6 +4811,10 @@ provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
 libero = [{ name = "libero", editable = "third_party/LIBERO" }]
+libero-plus = [
+    { name = "scikit-image", specifier = ">=0.24" },
+    { name = "wand", specifier = ">=0.6" },
+]
 openpi = [{ name = "openpi", editable = "third_party/dsrl_openpi" }]
 robometer = [
     { name = "robometer", editable = "third_party/robometer" },
@@ -4791,11 +4839,15 @@ dependencies = [
     { name = "tensorboard" },
     { name = "tensorboardx" },
     { name = "termcolor" },
-    { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'group-25-robometer-policy-learning-openpi'" },
-    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'group-25-robometer-policy-learning-robometer' or extra != 'group-25-robometer-policy-learning-openpi'" },
+    { name = "torch", version = "2.7.1", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torch", version = "2.8.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi') or (extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
     { name = "torchvision", version = "0.22.1", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (platform_machine != 'aarch64' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
-    { name = "torchvision", version = "0.22.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine != 'aarch64' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
-    { name = "torchvision", version = "0.23.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'group-25-robometer-policy-learning-robometer' or extra != 'group-25-robometer-policy-learning-openpi'" },
+    { name = "torchvision", version = "0.22.1", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torchvision", version = "0.22.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torchvision", version = "0.23.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torchvision", version = "0.23.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi') or (extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
     { name = "tqdm" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/3d/c3/44b1d1ea4bcb4bbed43d19e09505f4142714451ded74020d4f679cdc89fb/robomimic-0.2.0.tar.gz", hash = "sha256:ee3bb5cf9c3e1feead6b57b43c5db738fd0a8e0c015fdf6419808af8fffdc463", size = 192919, upload-time = "2021-12-17T19:00:33.279Z" }
@@ -4916,6 +4968,33 @@ wheels = [
 ]
 
 [[package]]
+name = "scikit-image"
+version = "0.26.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "imageio" },
+    { name = "lazy-loader" },
+    { name = "networkx" },
+    { name = "numpy", version = "1.26.4", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-25-robometer-policy-learning-openpi'" },
+    { name = "numpy", version = "2.1.3", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-25-robometer-policy-learning-robometer' or extra != 'group-25-robometer-policy-learning-openpi'" },
+    { name = "packaging" },
+    { name = "pillow" },
+    { name = "scipy" },
+    { name = "tifffile" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a1/b4/2528bb43c67d48053a7a649a9666432dc307d66ba02e3a6d5c40f46655df/scikit_image-0.26.0.tar.gz", hash = "sha256:f5f970ab04efad85c24714321fcc91613fcb64ef2a892a13167df2f3e59199fa", size = 22729739, upload-time = "2025-12-20T17:12:21.824Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/76/16/8a407688b607f86f81f8c649bf0d68a2a6d67375f18c2d660aba20f5b648/scikit_image-0.26.0-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:b1ede33a0fb3731457eaf53af6361e73dd510f449dac437ab54573b26788baf0", size = 12355510, upload-time = "2025-12-20T17:10:31.628Z" },
+    { url = "https://files.pythonhosted.org/packages/6b/f9/7efc088ececb6f6868fd4475e16cfafc11f242ce9ab5fc3557d78b5da0d4/scikit_image-0.26.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:7af7aa331c6846bd03fa28b164c18d0c3fd419dbb888fb05e958ac4257a78fdd", size = 12056334, upload-time = "2025-12-20T17:10:34.559Z" },
+    { url = "https://files.pythonhosted.org/packages/9f/1e/bc7fb91fb5ff65ef42346c8b7ee8b09b04eabf89235ab7dbfdfd96cbd1ea/scikit_image-0.26.0-cp311-cp311-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:9ea6207d9e9d21c3f464efe733121c0504e494dbdc7728649ff3e23c3c5a4953", size = 13297768, upload-time = "2025-12-20T17:10:37.733Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/2a/e71c1a7d90e70da67b88ccc609bd6ae54798d5847369b15d3a8052232f9d/scikit_image-0.26.0-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:74aa5518ccea28121f57a95374581d3b979839adc25bb03f289b1bc9b99c58af", size = 13711217, upload-time = "2025-12-20T17:10:40.935Z" },
+    { url = "https://files.pythonhosted.org/packages/d4/59/9637ee12c23726266b91296791465218973ce1ad3e4c56fc81e4d8e7d6e1/scikit_image-0.26.0-cp311-cp311-musllinux_1_2_aarch64.whl", hash = "sha256:d5c244656de905e195a904e36dbc18585e06ecf67d90f0482cbde63d7f9ad59d", size = 14337782, upload-time = "2025-12-20T17:10:43.452Z" },
+    { url = "https://files.pythonhosted.org/packages/e7/5c/a3e1e0860f9294663f540c117e4bf83d55e5b47c281d475cc06227e88411/scikit_image-0.26.0-cp311-cp311-musllinux_1_2_x86_64.whl", hash = "sha256:21a818ee6ca2f2131b9e04d8eb7637b5c18773ebe7b399ad23dcc5afaa226d2d", size = 14805997, upload-time = "2025-12-20T17:10:45.93Z" },
+    { url = "https://files.pythonhosted.org/packages/d3/c6/2eeacf173da041a9e388975f54e5c49df750757fcfc3ee293cdbbae1ea0a/scikit_image-0.26.0-cp311-cp311-win_amd64.whl", hash = "sha256:9490360c8d3f9a7e85c8de87daf7c0c66507960cf4947bb9610d1751928721c7", size = 11878486, upload-time = "2025-12-20T17:10:48.246Z" },
+    { url = "https://files.pythonhosted.org/packages/c3/a4/a852c4949b9058d585e762a66bf7e9a2cd3be4795cd940413dfbfbb0ce79/scikit_image-0.26.0-cp311-cp311-win_arm64.whl", hash = "sha256:0baa0108d2d027f34d748e84e592b78acc23e965a5de0e4bb03cf371de5c0581", size = 11346518, upload-time = "2025-12-20T17:10:50.575Z" },
+]
+
+[[package]]
 name = "scikit-learn"
 version = "1.8.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4991,8 +5070,10 @@ dependencies = [
     { name = "numpy", version = "2.1.3", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-25-robometer-policy-learning-robometer' or extra != 'group-25-robometer-policy-learning-openpi'" },
     { name = "scikit-learn" },
     { name = "scipy" },
-    { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'group-25-robometer-policy-learning-openpi'" },
-    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'group-25-robometer-policy-learning-robometer' or extra != 'group-25-robometer-policy-learning-openpi'" },
+    { name = "torch", version = "2.7.1", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torch", version = "2.8.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi') or (extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
     { name = "tqdm" },
     { name = "transformers" },
     { name = "typing-extensions" },
@@ -5353,8 +5434,10 @@ name = "thop"
 version = "0.1.1.post2209072238"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'group-25-robometer-policy-learning-openpi'" },
-    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'group-25-robometer-policy-learning-robometer' or extra != 'group-25-robometer-policy-learning-openpi'" },
+    { name = "torch", version = "2.7.1", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torch", version = "2.8.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi') or (extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/bb/0f/72beeab4ff5221dc47127c80f8834b4bcd0cb36f6ba91c0b1d04a1233403/thop-0.1.1.post2209072238-py3-none-any.whl", hash = "sha256:01473c225231927d2ad718351f78ebf7cffe6af3bed464c4f1ba1ef0f7cdda27", size = 15443, upload-time = "2022-09-07T14:38:37.211Z" },
@@ -5367,6 +5450,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/b7/4d/08c89e34946fce2aec4fbb45c9016efd5f4d7f24af8e5d93296e935631d8/threadpoolctl-3.6.0.tar.gz", hash = "sha256:8ab8b4aa3491d812b623328249fab5302a68d2d71745c8a4c719a2fcaba9f44e", size = 21274, upload-time = "2025-03-13T13:49:23.031Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/32/d5/f9a850d79b0851d1d4ef6456097579a9005b31fea68726a4ae5f2d82ddd9/threadpoolctl-3.6.0-py3-none-any.whl", hash = "sha256:43a0b8fd5a2928500110039e43a5eed8480b918967083ea48dc3ab9f13c4a7fb", size = 18638, upload-time = "2025-03-13T13:49:21.846Z" },
+]
+
+[[package]]
+name = "tifffile"
+version = "2026.3.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "1.26.4", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-25-robometer-policy-learning-openpi'" },
+    { name = "numpy", version = "2.1.3", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-25-robometer-policy-learning-robometer' or extra != 'group-25-robometer-policy-learning-openpi'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c5/cb/2f6d79c7576e22c116352a801f4c3c8ace5957e9aced862012430b62e14f/tifffile-2026.3.3.tar.gz", hash = "sha256:d9a1266bed6f2ee1dd0abde2018a38b4f8b2935cb843df381d70ac4eac5458b7", size = 388745, upload-time = "2026-03-03T19:14:38.134Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1a/e4/e804505f87627cd8cdae9c010c47c4485fd8c1ce31a7dd0ab7fcc4707377/tifffile-2026.3.3-py3-none-any.whl", hash = "sha256:e8be15c94273113d31ecb7aa3a39822189dd11c4967e3cc88c178f1ad2fd1170", size = 243960, upload-time = "2026-03-03T19:14:35.808Z" },
 ]
 
 [[package]]
@@ -5424,19 +5520,40 @@ wheels = [
 
 [[package]]
 name = "torch"
-version = "2.7.1+cu128"
-source = { registry = "https://download.pytorch.org/whl/cu128" }
+version = "2.7.1"
+source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "sys_platform == 'darwin'",
-    "platform_machine == 'aarch64' and sys_platform == 'linux'",
-    "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux')",
     "sys_platform == 'emscripten'",
 ]
 dependencies = [
-    { name = "filelock", marker = "extra == 'group-25-robometer-policy-learning-openpi'" },
-    { name = "fsspec", version = "2025.3.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-25-robometer-policy-learning-openpi'" },
-    { name = "jinja2", marker = "extra == 'group-25-robometer-policy-learning-openpi'" },
-    { name = "networkx", marker = "extra == 'group-25-robometer-policy-learning-openpi'" },
+    { name = "filelock", marker = "(sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "fsspec", version = "2025.3.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "jinja2", marker = "(sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "networkx", marker = "(sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "sympy", marker = "(sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "typing-extensions", marker = "(sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/11/56/2eae3494e3d375533034a8e8cf0ba163363e996d85f0629441fa9d9843fe/torch-2.7.1-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:236f501f2e383f1cb861337bdf057712182f910f10aeaf509065d54d339e49b2", size = 99093039, upload-time = "2025-06-04T17:39:06.963Z" },
+    { url = "https://files.pythonhosted.org/packages/e5/94/34b80bd172d0072c9979708ccd279c2da2f55c3ef318eceec276ab9544a4/torch-2.7.1-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:06eea61f859436622e78dd0cdd51dbc8f8c6d76917a9cf0555a333f9eac31ec1", size = 821174704, upload-time = "2025-06-04T17:37:03.799Z" },
+    { url = "https://files.pythonhosted.org/packages/50/9e/acf04ff375b0b49a45511c55d188bcea5c942da2aaf293096676110086d1/torch-2.7.1-cp311-cp311-win_amd64.whl", hash = "sha256:8273145a2e0a3c6f9fd2ac36762d6ee89c26d430e612b95a99885df083b04e52", size = 216095937, upload-time = "2025-06-04T17:39:24.83Z" },
+    { url = "https://files.pythonhosted.org/packages/5b/2b/d36d57c66ff031f93b4fa432e86802f84991477e522adcdffd314454326b/torch-2.7.1-cp311-none-macosx_11_0_arm64.whl", hash = "sha256:aea4fc1bf433d12843eb2c6b2204861f43d8364597697074c8d38ae2507f8730", size = 68640034, upload-time = "2025-06-04T17:39:17.989Z" },
+]
+
+[[package]]
+name = "torch"
+version = "2.7.1+cu128"
+source = { registry = "https://download.pytorch.org/whl/cu128" }
+resolution-markers = [
+    "platform_machine == 'aarch64' and sys_platform == 'linux'",
+    "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux')",
+]
+dependencies = [
+    { name = "filelock", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "fsspec", version = "2025.3.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "jinja2", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "networkx", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
     { name = "nvidia-cublas-cu12", version = "12.8.3.14", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (platform_machine != 'x86_64' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
     { name = "nvidia-cuda-cupti-cu12", version = "12.8.57", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (platform_machine != 'x86_64' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
     { name = "nvidia-cuda-nvrtc-cu12", version = "12.8.61", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (platform_machine != 'x86_64' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
@@ -5451,9 +5568,9 @@ dependencies = [
     { name = "nvidia-nccl-cu12", version = "2.26.2", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (platform_machine != 'x86_64' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
     { name = "nvidia-nvjitlink-cu12", version = "12.8.61", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (platform_machine != 'x86_64' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
     { name = "nvidia-nvtx-cu12", version = "12.8.55", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (platform_machine != 'x86_64' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
-    { name = "sympy", marker = "extra == 'group-25-robometer-policy-learning-openpi'" },
+    { name = "sympy", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
     { name = "triton", version = "3.3.1", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
-    { name = "typing-extensions", marker = "extra == 'group-25-robometer-policy-learning-openpi'" },
+    { name = "typing-extensions", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
 ]
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.7.1%2Bcu128-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:3a0954c54fd7cb9f45beab1272dece2a05b0e77023c1da33ba32a7919661260f", upload-time = "2025-06-03T18:31:04Z" },
@@ -5463,18 +5580,39 @@ wheels = [
 
 [[package]]
 name = "torch"
+version = "2.8.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "sys_platform != 'linux' and sys_platform != 'win32'",
+]
+dependencies = [
+    { name = "filelock", marker = "(sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "fsspec", version = "2025.9.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "jinja2", marker = "(sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "networkx", marker = "(sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "sympy", marker = "(sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "typing-extensions", marker = "(sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8f/c4/3e7a3887eba14e815e614db70b3b529112d1513d9dae6f4d43e373360b7f/torch-2.8.0-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:220a06fd7af8b653c35d359dfe1aaf32f65aa85befa342629f716acb134b9710", size = 102073391, upload-time = "2025-08-06T14:53:20.937Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/63/4fdc45a0304536e75a5e1b1bbfb1b56dd0e2743c48ee83ca729f7ce44162/torch-2.8.0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:c12fa219f51a933d5f80eeb3a7a5d0cbe9168c0a14bbb4055f1979431660879b", size = 888063640, upload-time = "2025-08-06T14:55:05.325Z" },
+    { url = "https://files.pythonhosted.org/packages/84/57/2f64161769610cf6b1c5ed782bd8a780e18a3c9d48931319f2887fa9d0b1/torch-2.8.0-cp311-cp311-win_amd64.whl", hash = "sha256:8c7ef765e27551b2fbfc0f41bcf270e1292d9bf79f8e0724848b1682be6e80aa", size = 241366752, upload-time = "2025-08-06T14:53:38.692Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/5e/05a5c46085d9b97e928f3f037081d3d2b87fb4b4195030fc099aaec5effc/torch-2.8.0-cp311-none-macosx_11_0_arm64.whl", hash = "sha256:5ae0524688fb6707c57a530c2325e13bb0090b745ba7b4a2cd6a3ce262572916", size = 73621174, upload-time = "2025-08-06T14:53:25.44Z" },
+]
+
+[[package]]
+name = "torch"
 version = "2.8.0+cu128"
 source = { registry = "https://download.pytorch.org/whl/cu128" }
 resolution-markers = [
     "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')",
-    "sys_platform != 'linux' and sys_platform != 'win32' and extra != 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer'",
     "extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
 ]
 dependencies = [
-    { name = "filelock" },
-    { name = "fsspec", version = "2025.9.0", source = { registry = "https://pypi.org/simple" } },
-    { name = "jinja2" },
-    { name = "networkx" },
+    { name = "filelock", marker = "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi') or (extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "fsspec", version = "2025.9.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi') or (extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "jinja2", marker = "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi') or (extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "networkx", marker = "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi') or (extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
     { name = "nvidia-cublas-cu12", version = "12.8.4.1", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
     { name = "nvidia-cuda-cupti-cu12", version = "12.8.90", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
     { name = "nvidia-cuda-nvrtc-cu12", version = "12.8.93", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
@@ -5489,9 +5627,9 @@ dependencies = [
     { name = "nvidia-nccl-cu12", version = "2.27.3", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
     { name = "nvidia-nvjitlink-cu12", version = "12.8.93", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
     { name = "nvidia-nvtx-cu12", version = "12.8.90", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
-    { name = "sympy" },
+    { name = "sympy", marker = "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi') or (extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
     { name = "triton", version = "3.4.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
-    { name = "typing-extensions" },
+    { name = "typing-extensions", marker = "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi') or (extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
 ]
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:039b9dcdd6bdbaa10a8a5cd6be22c4cb3e3589a341e5f904cbb571ca28f55bed", upload-time = "2025-10-01T23:49:06Z" },
@@ -5509,8 +5647,27 @@ wheels = [
 
 [[package]]
 name = "torchcodec"
+version = "0.5"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "sys_platform == 'darwin'",
+    "platform_machine == 'aarch64' and sys_platform == 'linux'",
+    "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux')",
+    "sys_platform == 'emscripten'",
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/84/9f/8e0ae96b2560050eb1a8780dabbe3d192cf99e62a5ce2a128684bfd6f5d6/torchcodec-0.5-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:d582981f251979d4432a1606d2bfbc8d56b98a701957afbaf4cafe7569b19c68", size = 3307718, upload-time = "2025-07-23T17:43:52.805Z" },
+    { url = "https://files.pythonhosted.org/packages/d3/a1/cc2b7f72104cbb5f60f5f277f470e9d0172bffb354f74b0e13a02a241165/torchcodec-0.5-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:00252c2a138c655851cc7aa6e7ad6455c6513c9b2f93cec74563cba83196be8a", size = 1374385, upload-time = "2025-07-23T17:42:43.219Z" },
+]
+
+[[package]]
+name = "torchcodec"
 version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "sys_platform == 'linux' or sys_platform == 'win32'",
+    "sys_platform != 'linux' and sys_platform != 'win32'",
+]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/6a/f1/bb2b5ab929ef3f092cb6508673510ffc2aafd8324493c94a2d41f1c8a683/torchcodec-0.7.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:967a14b31e04721901ddbf965f9e9f733f328c5e98a51e22f414e25ac32e20ba", size = 3388626, upload-time = "2025-09-08T14:17:50.433Z" },
     { url = "https://files.pythonhosted.org/packages/06/14/8ff28247988365fc47e8471e28cdfd8d037232fcf73abb67ee815ac80f1d/torchcodec-0.7.0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:afb1c48b52bd4ee8f485f5a427bb4e82380590255a26b8e9e3fe099e0779287f", size = 1419444, upload-time = "2025-09-08T14:17:41.479Z" },
@@ -5535,17 +5692,35 @@ wheels = [
 
 [[package]]
 name = "torchvision"
-version = "0.22.1+cu128"
-source = { registry = "https://download.pytorch.org/whl/cu128" }
+version = "0.22.1"
+source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "sys_platform == 'darwin'",
-    "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux')",
     "sys_platform == 'emscripten'",
 ]
 dependencies = [
-    { name = "numpy", version = "1.26.4", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
-    { name = "pillow", marker = "(platform_machine != 'aarch64' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
-    { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine != 'aarch64' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "numpy", version = "1.26.4", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "pillow", marker = "(sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torch", version = "2.7.1", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f6/00/bdab236ef19da050290abc2b5203ff9945c84a1f2c7aab73e8e9c8c85669/torchvision-0.22.1-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:4addf626e2b57fc22fd6d329cf1346d474497672e6af8383b7b5b636fba94a53", size = 1947827, upload-time = "2025-06-04T17:43:10.84Z" },
+    { url = "https://files.pythonhosted.org/packages/ac/d0/18f951b2be3cfe48c0027b349dcc6fde950e3dc95dd83e037e86f284f6fd/torchvision-0.22.1-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:8b4a53a6067d63adba0c52f2b8dd2290db649d642021674ee43c0c922f0c6a69", size = 2514021, upload-time = "2025-06-04T17:43:07.608Z" },
+    { url = "https://files.pythonhosted.org/packages/c3/1a/63eb241598b36d37a0221e10af357da34bd33402ccf5c0765e389642218a/torchvision-0.22.1-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:b7866a3b326413e67724ac46f1ee594996735e10521ba9e6cdbe0fa3cd98c2f2", size = 7487300, upload-time = "2025-06-04T17:42:58.349Z" },
+    { url = "https://files.pythonhosted.org/packages/e5/73/1b009b42fe4a7774ba19c23c26bb0f020d68525c417a348b166f1c56044f/torchvision-0.22.1-cp311-cp311-win_amd64.whl", hash = "sha256:bb3f6df6f8fd415ce38ec4fd338376ad40c62e86052d7fc706a0dd51efac1718", size = 1707989, upload-time = "2025-06-04T17:43:14.332Z" },
+]
+
+[[package]]
+name = "torchvision"
+version = "0.22.1+cu128"
+source = { registry = "https://download.pytorch.org/whl/cu128" }
+resolution-markers = [
+    "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux')",
+]
+dependencies = [
+    { name = "numpy", version = "1.26.4", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "pillow", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
 ]
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.22.1%2Bcu128-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:92568ac46b13a8c88b61589800b1b9c4629be091ea7ce080fc6fc622e11e0915", upload-time = "2025-06-03T18:37:28Z" },
@@ -5554,17 +5729,35 @@ wheels = [
 
 [[package]]
 name = "torchvision"
+version = "0.23.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "sys_platform != 'linux' and sys_platform != 'win32'",
+]
+dependencies = [
+    { name = "numpy", version = "2.1.3", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "pillow", marker = "(sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torch", version = "2.8.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f0/d7/15d3d7bd8d0239211b21673d1bac7bc345a4ad904a8e25bb3fd8a9cf1fbc/torchvision-0.23.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:49aa20e21f0c2bd458c71d7b449776cbd5f16693dd5807195a820612b8a229b7", size = 1856884, upload-time = "2025-08-06T14:58:00.237Z" },
+    { url = "https://files.pythonhosted.org/packages/dd/14/7b44fe766b7d11e064c539d92a172fa9689a53b69029e24f2f1f51e7dc56/torchvision-0.23.0-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:01dc33ee24c79148aee7cdbcf34ae8a3c9da1674a591e781577b716d233b1fa6", size = 2395543, upload-time = "2025-08-06T14:58:04.373Z" },
+    { url = "https://files.pythonhosted.org/packages/79/9c/fcb09aff941c8147d9e6aa6c8f67412a05622b0c750bcf796be4c85a58d4/torchvision-0.23.0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:35c27941831b653f5101edfe62c03d196c13f32139310519e8228f35eae0e96a", size = 8628388, upload-time = "2025-08-06T14:58:07.802Z" },
+    { url = "https://files.pythonhosted.org/packages/93/40/3415d890eb357b25a8e0a215d32365a88ecc75a283f75c4e919024b22d97/torchvision-0.23.0-cp311-cp311-win_amd64.whl", hash = "sha256:09bfde260e7963a15b80c9e442faa9f021c7e7f877ac0a36ca6561b367185013", size = 1600741, upload-time = "2025-08-06T14:57:59.158Z" },
+]
+
+[[package]]
+name = "torchvision"
 version = "0.23.0+cu128"
 source = { registry = "https://download.pytorch.org/whl/cu128" }
 resolution-markers = [
     "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')",
-    "sys_platform != 'linux' and sys_platform != 'win32' and extra != 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer'",
     "extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
 ]
 dependencies = [
-    { name = "numpy", version = "2.1.3", source = { registry = "https://pypi.org/simple" } },
-    { name = "pillow" },
-    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
+    { name = "numpy", version = "2.1.3", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi') or (extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "pillow", marker = "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi') or (extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform == 'linux' and extra != 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'win32' and extra != 'group-25-robometer-policy-learning-openpi') or (extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
 ]
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.23.0%2Bcu128-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:93f1b5f56b20cd6869bca40943de4fd3ca9ccc56e1b57f47c671de1cdab39cdb", upload-time = "2025-08-05T20:11:52Z" },
@@ -5664,7 +5857,7 @@ resolution-markers = [
     "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux')",
 ]
 dependencies = [
-    { name = "setuptools", marker = "extra == 'group-25-robometer-policy-learning-openpi'" },
+    { name = "setuptools", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi') or (sys_platform == 'darwin' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'emscripten' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/21/2f/3e56ea7b58f80ff68899b1dbe810ff257c9d177d288c6b0f55bf2fe4eb50/triton-3.3.1-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:b31e3aa26f8cb3cc5bf4e187bf737cbacf17311e1112b781d4a059353dfd731b", size = 155689937, upload-time = "2025-05-29T23:39:44.182Z" },
@@ -5680,7 +5873,7 @@ resolution-markers = [
     "extra != 'group-25-robometer-policy-learning-openpi' and extra != 'group-25-robometer-policy-learning-robometer'",
 ]
 dependencies = [
-    { name = "setuptools" },
+    { name = "setuptools", marker = "extra == 'group-25-robometer-policy-learning-robometer' or extra != 'group-25-robometer-policy-learning-openpi'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7d/39/43325b3b651d50187e591eefa22e236b2981afcebaefd4f2fc0ea99df191/triton-3.4.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:7b70f5e6a41e52e48cfc087436c8a28c17ff98db369447bcaff3b887a3ab4467", size = 155531138, upload-time = "2025-07-30T19:58:29.908Z" },
@@ -5713,7 +5906,7 @@ name = "typeguard"
 version = "4.5.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/67/1c/dfba5c4633cafc4c701f237d2ba63b416805047fd6d96aab4cfc40969f98/typeguard-4.5.2.tar.gz", hash = "sha256:5a16dcac23502039299c97c8941651bc33d7ea8cc4b2f7d6bbb1b528f6eea423", size = 80240, upload-time = "2026-05-14T12:59:40.857Z" }
 wheels = [
@@ -5749,8 +5942,8 @@ name = "typing-inspect"
 version = "0.9.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "mypy-extensions", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
-    { name = "typing-extensions", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
+    { name = "mypy-extensions" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/dc/74/1789779d91f1961fa9438e9a8710cdae6bd138c80d7303996933d117264a/typing_inspect-0.9.0.tar.gz", hash = "sha256:b23fc42ff6f6ef6954e4852c1fb512cdd18dbea03134f91f856a95ccc9461f78", size = 13825, upload-time = "2023-05-24T20:25:47.612Z" }
 wheels = [
@@ -5774,9 +5967,9 @@ name = "tyro"
 version = "1.0.13"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "docstring-parser", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
-    { name = "typeguard", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
-    { name = "typing-extensions", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
+    { name = "docstring-parser" },
+    { name = "typeguard" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/24/d6/7126f9e7de139632134d59b5d1972e93c610ee2cb13829e8f4f48f6613cb/tyro-1.0.13.tar.gz", hash = "sha256:731a90c9836b77fffe7c3fa0477ef2d3b6fa91252ddc0bb4d32dadd4fcc143d4", size = 489479, upload-time = "2026-04-14T18:21:52.888Z" }
 wheels = [
@@ -5809,8 +6002,10 @@ dependencies = [
     { name = "protobuf" },
     { name = "psutil" },
     { name = "sentencepiece" },
-    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
-    { name = "torchvision", version = "0.23.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
+    { name = "torch", version = "2.8.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torchvision", version = "0.23.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torchvision", version = "0.23.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
     { name = "tqdm" },
     { name = "transformers" },
     { name = "triton", version = "3.4.0", source = { registry = "https://pypi.org/simple" }, marker = "'linux' in sys_platform" },
@@ -5846,7 +6041,8 @@ dependencies = [
     { name = "psutil" },
     { name = "regex" },
     { name = "sentencepiece" },
-    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
+    { name = "torch", version = "2.8.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
     { name = "torchao" },
     { name = "tqdm" },
     { name = "transformers" },
@@ -5915,6 +6111,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/1e/67/cbae4bf7683a64755c2c1778c418fea96d00e34395bb91743f08bd951571/wadler_lindig-0.1.7.tar.gz", hash = "sha256:81d14d3fe77d441acf3ebd7f4aefac20c74128bf460e84b512806dccf7b2cd55", size = 15842, upload-time = "2025-06-18T07:00:42.843Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8d/96/04e7b441807b26b794da5b11e59ed7f83b2cf8af202bd7eba8ad2fa6046e/wadler_lindig-0.1.7-py3-none-any.whl", hash = "sha256:e3ec83835570fd0a9509f969162aeb9c65618f998b1f42918cfc8d45122fe953", size = 20516, upload-time = "2025-06-18T07:00:41.684Z" },
+]
+
+[[package]]
+name = "wand"
+version = "0.7.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/85/27/98de4383d028df318b9dd56e7ac2a8437684db18c2da7204c084f37e8f95/wand-0.7.2.tar.gz", hash = "sha256:0387fd08848d00cadd1d885fcb19a17dd4250df2029e5338b6b668b7fed64b5b", size = 11889993, upload-time = "2026-06-25T13:48:31.512Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fb/11/764bee6e793c01d6ce7b99f4872f9fd5ef89904b172cb9d8a0a1dae02f21/wand-0.7.2-py3-none-any.whl", hash = "sha256:7db97c5e51862fdd5e58866dbf34e2dcae295245511147367690a3e17f459984", size = 145045, upload-time = "2026-06-25T13:48:38.348Z" },
 ]
 
 [[package]]
@@ -6057,7 +6262,8 @@ version = "0.0.32.post2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy", version = "2.1.3", source = { registry = "https://pypi.org/simple" } },
-    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
+    { name = "torch", version = "2.8.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
+    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform == 'linux' and extra == 'group-25-robometer-policy-learning-robometer') or (sys_platform == 'win32' and extra == 'group-25-robometer-policy-learning-robometer') or (extra == 'group-25-robometer-policy-learning-openpi' and extra == 'group-25-robometer-policy-learning-robometer')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/47/99/68d2e7a17b65a08180d6b120d1d293d5855a0c5999cb30a79fb466b49642/xformers-0.0.32.post2.tar.gz", hash = "sha256:9538be803969c6e1ca16a3ece921e472c24f79970b10be1087a389dcb66e412a", size = 12105990, upload-time = "2025-08-15T11:48:56.584Z" }
 wheels = [
@@ -6112,9 +6318,9 @@ name = "yarl"
 version = "1.24.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "idna", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
-    { name = "multidict", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
-    { name = "propcache", marker = "extra == 'group-25-robometer-policy-learning-openpi' or extra == 'group-25-robometer-policy-learning-robometer'" },
+    { name = "idna" },
+    { name = "multidict" },
+    { name = "propcache" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/79/12/1e8f37460ea0f7eb59c221fdaf0ed75e7ac43e97f8093b9c6f411df50a78/yarl-1.24.2.tar.gz", hash = "sha256:9ac374123c6fd7abf64d1fec93962b0bd4ee2c19751755a762a72dd96c0378f8", size = 210798, upload-time = "2026-05-19T21:31:05.599Z" }
 wheels = [

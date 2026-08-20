@@ -40,6 +40,11 @@ A flexible reinforcement \ imitation learning framework supporting multiple algo
    branch `hitl-work`), `LIBERO`, and `robometer`. Each is wired as an **editable dependency group**
    (`[dependency-groups]` + `[tool.uv.sources]` in `pyproject.toml`).
 
+   `LIBERO-plus` (the robustness benchmark: 10,030 perturbed tasks) is also a submodule but is
+   deliberately *not* installed — it ships the same `libero` package as LIBERO and is activated
+   per run with `env.libero_plus=true`. Set it up with `bash scripts/setup_libero_plus.sh` and see
+   [docs/LIBERO_PLUS.md](docs/LIBERO_PLUS.md).
+
 3. **Create and sync the virtual environment.** A plain `uv sync` installs the default groups —
    **`openpi` + `libero`** — which is the Pi0 / π0.5, LIBERO, and DSRL / HITL path:
   ```bash

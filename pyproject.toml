@@ -65,6 +65,7 @@ dependencies = [
     "diffusers>=0.38.0",
     "pynput>=1.8.2",
     "hidapi>=0.15.0",
+    "moviepy>=2.2.1",
 ]
 
 [project.urls]
@@ -108,6 +109,15 @@ dev = [
 [dependency-groups]
 libero = ["libero"]
 openpi = ["openpi"]
+# LIBERO-plus (third_party/LIBERO-plus) is deliberately NOT installed -- it ships the same top-level
+# `libero` package as LIBERO, so the two cannot co-exist in one environment. It is selected per run by
+# `env.libero_plus=true`, which makes robometer_policy_learning/envs/libero_plus.py shadow the
+# installed LIBERO on sys.path. Only its two extra runtime deps are installed here: LIBERO-plus's
+# envs/env_wrapper.py imports both at module import time for the Sensor Noise corruptions, so they are
+# needed for ANY LIBERO-plus env. `wand` also needs the system ImageMagick library
+# (`sudo apt-get install -y libmagickwand-dev`); without it activate() stubs `wand` out and only
+# motion-blur tasks (`_noise_N`, N<=10) fail.
+libero-plus = ["wand>=0.6", "scikit-image>=0.24"]
 # The reward-model path: the robometer checkout plus the LLM-finetuning stack it needs.
 robometer = [
     "robometer",
@@ -153,7 +163,9 @@ conflicts = [[{ group = "robometer" }, { group = "openpi" }]]
 # The pi0/LIBERO groups are the DEFAULT install set, so a plain `uv run` (as used by
 # scripts/hitl_pi0_loop.py) keeps openpi's torch==2.7.1 pin instead of re-syncing to a set that
 # silently bumps torch to 2.8.0 and churns the CUDA stack.
-default-groups = ["openpi", "libero"]
+# `libero-plus` is in the default set on purpose: `uv run` re-syncs the environment and would PRUNE
+# wand/scikit-image if they lived in a non-default group, silently breaking `env.libero_plus=true`.
+default-groups = ["openpi", "libero", "libero-plus"]
 extra-build-dependencies = { egl-probe = ["cmake<4.0"] }
 override-dependencies = [
     "transformers>=4.57.0,<5",

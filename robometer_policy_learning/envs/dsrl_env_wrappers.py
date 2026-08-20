@@ -1,6 +1,11 @@
-from robometer_policy_learning.envs.libero_pi0_wrapper import LiberoPI0Wrapper, VectorLiberoPromptWrapper
+from robometer_policy_learning.envs.libero_pi0_wrapper import (
+    LiberoPI0Wrapper,
+    VectorLiberoPromptWrapper,
+    _vec_language_instruction,
+)
+from robometer_policy_learning.envs import libero_plus
 import copy
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Union
 import numpy as np
 import gymnasium as gym
 import sys
@@ -159,6 +164,10 @@ def setup_libero_env(
     async_reward_relabel_kwargs: Optional[Dict] = None,
     chunk_size: Optional[int] = None,
     n_action_steps: int = 1,
+    use_libero_plus: bool = False,
+    task_name: Optional[str] = None,
+    init_state_index: Union[int, str, None] = "auto",
+    settle_steps: int = 10,
 ):
     """
     Setup LIBERO environment.
@@ -183,13 +192,33 @@ def setup_libero_env(
             so chunked policies execute ``n_action_steps`` actions open-loop before replanning.
             Leave None for DSRL/Pi0 (which handles chunking via its own action queue / action_exec_len).
         n_action_steps: Number of actions to execute open-loop per predicted chunk (<= chunk_size).
+        use_libero_plus: Build the task from the LIBERO-plus robustness benchmark
+            (third_party/LIBERO-plus) instead of the installed LIBERO. Activation shadows the
+            installed ``libero`` package for the rest of the process, so a single process cannot mix
+            the two. NOTE: the expanded suites (libero_spatial/object/goal/10) are NOT index-
+            compatible with plain LIBERO -- they hold only perturbed variants, in a different order.
+            ``libero_90`` is identical in both.
+        task_name: Select the task by name instead of index (resolved against the active checkout).
+            Takes precedence over ``task_id``; the practical way to pin a LIBERO-plus perturbation.
+        init_state_index: Which benchmark init state to restore on every reset. ``"auto"`` (default)
+            means index 0 under LIBERO-plus -- matching its evaluation protocol, and required for the
+            Objects Layout perturbations to take effect -- and None (robosuite randomizes placements
+            each reset, the historical behaviour here) under plain LIBERO. Pass an int for a fixed
+            state, ``"cycle"`` for varied-but-on-distribution starts across episodes, ``"random"``,
+            or None to opt out entirely.
+        settle_steps: No-op steps after restoring an init state so the sim settles (LIBERO uses 10).
     Returns:
-        env: Vectorized LIBERO environment
+        env: Vectorized LIBERO environment. Carries ``libero_task_info`` (dict) describing the
+            resolved task, including its LIBERO-plus perturbation category when applicable.
         remove_obs_keys: Keys to remove from observations for replay buffer
     """
+    if use_libero_plus:
+        # Must happen before the first `import libero` in this process.
+        libero_plus.activate()
+
     try:
         from libero.libero.envs import OffScreenRenderEnv, DummyVectorEnv
-        from libero.libero import benchmark, get_libero_path
+        from libero.libero import get_libero_path
     except ImportError:
         logger.error("LIBERO not found. Please install LIBERO.")
         sys.exit(1)
@@ -198,14 +227,49 @@ def setup_libero_env(
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    logger.info(f"Setting up LIBERO environment: {task_suite_name}, task {task_id}")
+    # Get task info (quiet constructor: upstream prints the full task-order permutation, which is
+    # 2402+ integers per env under LIBERO-plus).
+    task_suite = libero_plus.make_task_suite(task_suite_name)
 
-    # Get task info
-    benchmark_dict = benchmark.get_benchmark_dict()
-    task_suite = benchmark_dict[task_suite_name]()
+    if task_name is not None:
+        task_names = list(task_suite.get_task_names())
+        if task_name not in task_names:
+            raise KeyError(
+                f"Task {task_name!r} not found in suite {task_suite_name!r} "
+                f"({len(task_names)} tasks, libero_plus={use_libero_plus})."
+            )
+        task_id = task_names.index(task_name)
+    task_id = int(task_id)
     task = task_suite.get_task(task_id)
 
+    # Perturbation metadata (LIBERO-plus only; None for plain LIBERO / libero_90).
+    perturbation = libero_plus.describe_task(task_suite_name, task_id) if use_libero_plus else None
+    logger.info(
+        f"Setting up LIBERO{'-plus' if use_libero_plus else ''} environment: "
+        f"{task_suite_name}, task {task_id} ({task.name})"
+        + (f" | {perturbation['category']} (difficulty {perturbation['difficulty_level']})" if perturbation else "")
+    )
+
+    # For LIBERO-plus `_view_` / `_initstate_` / `_noise_` tasks this path is VIRTUAL: LIBERO-plus's
+    # ControlEnv parses the perturbation out of the string and strips it back to a real bddl file.
     task_bddl_file = os.path.join(get_libero_path("bddl_files"), task.problem_folder, task.bddl_file)
+
+    # Resolve the init-state policy and load the states once (shared by all sub-envs).
+    if init_state_index == "auto":
+        init_state_index = 0 if use_libero_plus else None
+    init_states = None
+    if init_state_index is not None:
+        init_states = libero_plus.load_task_init_states(task_suite, task_id)
+        logger.info(
+            f"Init states: {init_states.shape[0]} available, mode={init_state_index!r}, "
+            f"settle_steps={settle_steps}"
+        )
+    elif use_libero_plus:
+        logger.warning(
+            "init_state_index=None under LIBERO-plus: object placements will be randomized by "
+            "robosuite instead of restored from the benchmark init states. Objects Layout "
+            "perturbations will NOT be reproduced faithfully."
+        )
 
     # Process async reward relabeling config
     use_async_reward_relabel = async_reward_relabel_kwargs is not None
@@ -225,9 +289,17 @@ def setup_libero_env(
             base_env = OffScreenRenderEnv(**env_args)
             base_env.seed(seed + i)
             base_env = GymToGymnasiumWrapper(base_env, time_limit=max_episode_steps)
+            # Read the instruction off the loaded bddl rather than trusting `task.language`: LIBERO
+            # derives the latter from the FILENAME, so for LIBERO-plus `_view_`/`_initstate_`/`_noise_`
+            # tasks the perturbation suffix leaks into it ("... place it on the plate view 0 0 100 0 0
+            # initstate 0 noise 12"). The env's own value comes from the bddl and is always clean.
+            bddl_language = getattr(base_env, "language_instruction", None) or task.language
             wrapped_env = LiberoPI0Wrapper(
                 base_env,
-                language_instruction=task.language,
+                language_instruction=bddl_language,
+                init_states=init_states,
+                init_state_mode=init_state_index,
+                settle_steps=settle_steps,
             )
 
             # Wrap with async reward relabeling if enabled
@@ -276,14 +348,16 @@ def setup_libero_env(
             # Set metadata
             wrapped_env.task_id = task_id
             wrapped_env.task_suite = task_suite
-            wrapped_env.language_instruction = task.language
+            wrapped_env.language_instruction = bddl_language
 
             return wrapped_env
 
         env_fns.append(make_env)
 
     env = gym.vector.SyncVectorEnv(env_fns)
-    env = VectorLiberoPromptWrapper(env, sentence_model, language_instruction=task.language)
+    # Prefer the sub-envs' bddl-derived instruction over the filename-derived `task.language`.
+    resolved_language = _vec_language_instruction(env) or task.language
+    env = VectorLiberoPromptWrapper(env, sentence_model, language_instruction=resolved_language)
     # # Create vectorized environment
     # if dinov2_model is not None:
     #     single_space = getattr(env, "single_observation_space", env.observation_space)
@@ -312,6 +386,19 @@ def setup_libero_env(
         + (f" (open-loop chunking: chunk_size={chunk_size}, n_action_steps={n_action_steps})"
            if (chunk_size is not None and not use_async_reward_relabel) else "")
     )
+    # Provenance for the callers (logging, HDF5 metadata, wandb): what task actually got built.
+    env.libero_task_info = {
+        "suite": task_suite_name,
+        "task_id": task_id,
+        "task_name": task.name,
+        "language": resolved_language,
+        "libero_plus": bool(use_libero_plus),
+        "init_state_mode": init_state_index,
+        "num_init_states": int(init_states.shape[0]) if init_states is not None else 0,
+        "settle_steps": int(settle_steps),
+        "perturbation": perturbation,
+    }
+
     remove_obs_keys = ["observation/wrist_image", "language", "image", "wrist_image", "prompt"] + extra_keys_to_drop
     if dinov2_model:
         remove_obs_keys += image_keys

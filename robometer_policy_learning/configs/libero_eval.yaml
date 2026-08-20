@@ -6,6 +6,12 @@
 #
 # Run with:  uv run python scripts/eval_pi0_libero.py --config-name libero_eval \
 #                env.env_name=libero_90 'env.task_ids=[57,58,59]' eval.num_episodes=20
+#
+# LIBERO-plus robustness sweep -- each episode a DIFFERENT perturbation of the same family applied to
+# the same base task (see docs/LIBERO_PLUS.md):
+#            uv run python scripts/eval_pi0_libero.py --config-name libero_eval \
+#                env.libero_plus=true env.env_name=libero_spatial 'env.task_ids=[3,7]' \
+#                env.perturbation=camera eval.num_episodes=20
 defaults:
   - _self_
 
@@ -15,8 +21,47 @@ env:
   env_name: "libero_90"
   # List of task ids (from env_name) to evaluate. Override on the CLI, e.g. 'env.task_ids=[0,1,2]'.
   task_ids: [9, 25, 32, 35, 48, 59, 80]
+  # Alternative to task_ids: exact task names (the stable identifier under LIBERO-plus, whose task
+  # indices are not comparable to plain LIBERO). Takes precedence over task_ids when non-null.
+  task_names: null
+  # Episode step budget. Either one int for every task, or a LIST with one entry per task id (order
+  # matches task_ids / task_names), for runs that mix short and long-horizon tasks:
+  #   'env.task_ids=[57,58]' 'env.max_episode_steps=[400,900]'
   max_episode_steps: 600
   image_keys: ["observation/image"]
+
+  # ---------------------------------------------------------------------------------------------
+  # LIBERO-plus robustness benchmark (third_party/LIBERO-plus, see docs/LIBERO_PLUS.md).
+  # ---------------------------------------------------------------------------------------------
+  # true => build tasks from LIBERO-plus instead of the installed LIBERO. NOTE: libero_spatial /
+  # libero_object / libero_goal / libero_10 then hold ONLY perturbed variants (2402-2591 tasks each)
+  # in a different order, so task ids are NOT comparable across the two. libero_90 is identical in
+  # both. One process cannot mix the two checkouts.
+  libero_plus: false
+  # Which benchmark init state to restore at each reset. "auto" = index 0 under LIBERO-plus (its
+  # evaluation protocol, and required for the Objects Layout perturbations to take effect) and null
+  # under plain LIBERO (robosuite randomizes placements, the historical behaviour). Also accepts an
+  # int, "cycle" (episode k uses state k % N -- varied starts, still on-distribution) or "random".
+  init_state_index: "auto"
+  settle_steps: 10          # no-op steps after restoring an init state so the sim settles
+  # ---- Per-episode perturbation sampling (the main LIBERO-plus eval mode) ----
+  # Set a perturbation family and env.task_ids becomes a list of BASE task ids (0-9, in plain-LIBERO
+  # order -- so task_id=3 means the same task it always did). Each of the eval.num_episodes episodes
+  # then runs a DIFFERENT variant of that family for that base task, and the success rate is reported
+  # per (base task, family). Every (task, family) cell has 4-50 variants.
+  #
+  # One of: background, camera, language, light, layout, robot, noise (canonical names like
+  # "Camera Viewpoints" work too, as does a list, or "all" to mix every family). null => classic mode,
+  # where env.task_ids are literal LIBERO-plus variant ids.
+  perturbation: null
+  variant_sampling: "shuffle"   # shuffle (seeded permutation, no repeats until exhausted) | sequential
+  # Seed for the variant order ONLY (a private RNG, so it never disturbs env/policy seeding).
+  # null => a random seed is drawn per run, logged as "selected variant_seed=N" and written to
+  # eval_results.json; pass that value back in to replay the exact same perturbation sequence. Pin it
+  # across HITL rounds when you want each round's eval to see the same perturbations.
+  variant_seed: null
+  variant_difficulty_levels: null   # e.g. [1, 2] -- restrict the pool by difficulty (1 = easiest)
+  variant_name_contains: null       # further substring filter on the variant name
 
 # pi0 / pi0.5 policy to evaluate.
 pi0:

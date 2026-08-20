@@ -14,6 +14,7 @@ robomimic-style HDF5 dataset that stores the raw pi0-format observations:
     /data/demo_{i}/obs/wrist_image     [N,224,224,3] uint8  (pi0 ``observation/wrist_image``)
     /data/demo_{i}/obs/state           [N, 8]       (pi0 ``observation/state``)
     /data/demo_{i}.attrs["prompt"]     the LIBERO language instruction
+    /data/demo_{i}.attrs["variant_*"]  LIBERO-plus perturbation variant this demo ran (env.perturbation)
     /meta.attrs["info"]                JSON provenance (pi0 checkpoint, task, action_exec_len, ...)
 
 Observations are stored RAW (pi0 normalizes internally), so the dataset can later be exported to a
@@ -24,6 +25,18 @@ Usage (local machine with a display for the teleop window):
         env.env_name=libero_90 env.task_id=57 \
         pi0.checkpoint=gs://openpi-assets/checkpoints/pi05_libero/ \
         teleop.device=keyboard hitl.collect_num_rollouts=50
+
+Collecting on PERTURBED LIBERO-plus tasks (see docs/LIBERO_PLUS.md). With ``env.perturbation`` set,
+``env.task_id`` is a BASE task id and every rollout runs a different variant of that family:
+    uv run python scripts/collect_hitl_libero_pi0.py --config-name libero_collect_hitl \
+        env.libero_plus=true env.env_name=libero_spatial env.task_id=3 env.perturbation=camera \
+        teleop.device=keyboard hitl.collect_num_rollouts=20
+
+To pin ONE specific variant instead, give its exact name and leave env.perturbation null:
+    uv run python scripts/collect_hitl_libero_pi0.py --config-name libero_collect_hitl \
+        env.libero_plus=true env.env_name=libero_spatial env.init_state_index=cycle \
+        env.task_name=pick_up_the_black_bowl_next_to_the_ramekin_and_place_it_on_the_plate_light_1 \
+        teleop.device=keyboard hitl.collect_num_rollouts=20
 
 Controls:
   * Keyboard:   Tab = take/release control, wasd/rf + zx/tg/cv to move, space = gripper,
@@ -60,9 +73,10 @@ import numpy as np
 import torch
 from hydra import main as hydra_main
 from hydra.core.hydra_config import HydraConfig
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, ListConfig, OmegaConf
 
 from robometer_policy_learning.utils.logging_compat import get_logger, setup_loguru_logging
+from robometer_policy_learning.envs import libero_plus
 from robometer_policy_learning.envs.dsrl_env_wrappers import setup_libero_env
 from robometer_policy_learning.utils.hitl_utils import describe_control_mode
 from robometer_policy_learning.utils.pi0_hitl_utils import (
@@ -79,7 +93,77 @@ logger = get_logger()
 _OBS_KEY_TO_H5 = {PI0_IMAGE_KEY: "image", PI0_WRIST_KEY: "wrist_image", PI0_STATE_KEY: "state"}
 
 
-def _write_h5(episodes, output_path, *, action_min, action_max, meta_extra):
+def _perturbation_spec(cfg):
+    """``env.perturbation`` normalized to a list of family names, or None when unset."""
+    spec = OmegaConf.select(cfg, "env.perturbation", default=None)
+    if spec is None:
+        return None
+    if isinstance(spec, (ListConfig, list, tuple)):
+        spec = [str(x) for x in spec]
+        return spec or None
+    return [str(spec)]
+
+
+def _build_env(cfg, device, seed, task_id=None, task_name=None):
+    """Build the single LIBERO(-plus) env (no DINO / sentence models: pi0 takes raw images + prompt)."""
+    return setup_libero_env(
+        task_suite_name=cfg.env.env_name,
+        task_id=int(cfg.env.task_id) if task_id is None else int(task_id),
+        n_envs=1,
+        dinov2_model=None,
+        dinov2_processor=None,
+        sentence_model=None,
+        device=device,
+        seed=seed,
+        max_episode_steps=int(cfg.env.max_episode_steps),
+        image_keys=list(OmegaConf.select(cfg, "env.image_keys", default=[PI0_IMAGE_KEY])),
+        # LIBERO-plus: perturbed task variants + benchmark init states (see docs/LIBERO_PLUS.md).
+        use_libero_plus=bool(OmegaConf.select(cfg, "env.libero_plus", default=False)),
+        task_name=task_name,
+        init_state_index=OmegaConf.select(cfg, "env.init_state_index", default="auto"),
+        settle_steps=int(OmegaConf.select(cfg, "env.settle_steps", default=10)),
+    )[0]
+
+
+def _resolve_variant_seed(cfg) -> int:
+    """``env.variant_seed``, or a fresh random one when it is null.
+
+    Logged and stored in the dataset's meta info -- rerun with ``env.variant_seed=<value>`` to replay
+    the same perturbation sequence.
+    """
+    variant_seed = OmegaConf.select(cfg, "env.variant_seed", default=None)
+    if variant_seed is None:
+        variant_seed = int(time.time_ns() % (1 << 31))
+        logger.info(f"No env.variant_seed provided, selected variant_seed={variant_seed}")
+    return int(variant_seed)
+
+
+def _make_cycler(cfg, variant_seed: int):
+    """Variant pool + sampler for the configured (BASE task, perturbation family) cell."""
+    base_id = int(cfg.env.task_id)
+    levels = OmegaConf.select(cfg, "env.variant_difficulty_levels", default=None)
+    variants = libero_plus.variants_of(
+        str(cfg.env.env_name),
+        base_id,
+        categories=_perturbation_spec(cfg),
+        difficulty_levels=[int(x) for x in levels] if levels else None,
+        name_contains=OmegaConf.select(cfg, "env.variant_name_contains", default=None),
+    )
+    cycler = libero_plus.VariantCycler(
+        variants,
+        seed=int(variant_seed),
+        sampling=str(OmegaConf.select(cfg, "env.variant_sampling", default="shuffle")),
+    )
+    logger.info(
+        f"Perturbation sampling: base task {base_id} "
+        f"({libero_plus.base_task_name(str(cfg.env.env_name), base_id)}) | "
+        f"{cycler.num_variants} variants [{', '.join(sorted({v.category for v in variants}))}] | "
+        f"sampling={cycler.sampling} seed={cycler.seed}"
+    )
+    return cycler
+
+
+def _write_h5(episodes, output_path, *, action_min, action_max, meta_extra, episode_variants=None):
     """Write collected HITL episodes (lists of per-step transition dicts) to a robomimic-style HDF5."""
     if not episodes:
         raise RuntimeError("No episodes to write.")
@@ -112,6 +196,11 @@ def _write_h5(episodes, output_path, *, action_min, action_max, meta_extra):
 
             g.attrs["num_samples"] = n
             g.attrs["prompt"] = str(trs[0].get("prompt", ""))
+            # Which perturbation variant produced THIS demo. Under env.perturbation every rollout runs a
+            # different variant, so this cannot live in /meta alone.
+            if episode_variants is not None and i < len(episode_variants):
+                for key, value in episode_variants[i].items():
+                    g.attrs[key] = "" if value is None else value
             total += n
             intervention_total += int((interv == 1).sum())
 
@@ -156,21 +245,48 @@ def main(cfg: DictConfig):
     logger.info(f"Loading pi0 policy from {pi0_checkpoint} (config_name={pi0_config_name})")
     pi0_wrapper = Pi0Wrapper(pi0_checkpoint, device=str(device), config_name=pi0_config_name)
 
-    # ---- Single LIBERO env (no DINO / sentence models: pi0 consumes raw images + the prompt). ----
-    env, _ = setup_libero_env(
-        task_suite_name=cfg.env.env_name,
-        task_id=int(cfg.env.task_id),
-        n_envs=1,
-        dinov2_model=None,
-        dinov2_processor=None,
-        sentence_model=None,
-        device=device,
-        seed=seed,
-        max_episode_steps=int(cfg.env.max_episode_steps),
-        image_keys=list(OmegaConf.select(cfg, "env.image_keys", default=[PI0_IMAGE_KEY])),
-    )
+    # ---- LIBERO env. With env.perturbation set, every rollout runs a DIFFERENT variant of the same
+    # perturbation family, which means rebuilding the env per rollout (a variant is a distinct MuJoCo
+    # scene). The teleop device and window are owned by the worker and survive the rebuilds. ----
+    perturbation = _perturbation_spec(cfg)
+    task_name_cfg = OmegaConf.select(cfg, "env.task_name", default=None)
+    cycler, variant_seed = None, None
+    if perturbation is not None:
+        if not bool(OmegaConf.select(cfg, "env.libero_plus", default=False)):
+            raise ValueError("env.perturbation requires env.libero_plus=true (it selects LIBERO-plus variants).")
+        if task_name_cfg:
+            raise ValueError(
+                "env.task_name and env.perturbation are mutually exclusive: task_name pins one specific "
+                "variant, while env.perturbation samples variants of the BASE task in env.task_id."
+            )
+        variant_seed = _resolve_variant_seed(cfg)
+        cycler = _make_cycler(cfg, variant_seed)
+
+    def build_next_env():
+        """Build the env for the next rollout; returns (env, task_info, variant_attrs)."""
+        if cycler is None:
+            e = _build_env(cfg, device, seed, task_name=task_name_cfg)
+        else:
+            e = _build_env(cfg, device, seed, task_id=cycler.next().task_id)
+        info = getattr(e, "libero_task_info", None) or {}
+        pert = info.get("perturbation") or {}
+        return e, info, {
+            "variant_task_id": int(info.get("task_id", -1)),
+            "variant_task_name": info.get("task_name"),
+            "perturbation_category": pert.get("category"),
+            "difficulty_level": pert.get("difficulty_level"),
+        }
+
+    env, task_info, variant_attrs = build_next_env()
     action_dim = int(env.single_action_space.shape[0])
-    logger.info(f"LIBERO {cfg.env.env_name} task {cfg.env.task_id} | action_dim={action_dim}")
+    # Resolved task provenance (task_name may have overridden task_id; perturbation is LIBERO-plus only).
+    logger.info(
+        f"LIBERO{'-plus' if task_info.get('libero_plus') else ''} {cfg.env.env_name} "
+        f"task {task_info.get('task_id', cfg.env.task_id)} ({task_info.get('task_name')}) | action_dim={action_dim}"
+    )
+    if task_info.get("perturbation"):
+        pinfo = task_info["perturbation"]
+        logger.info(f"Perturbation: {pinfo['category']} (difficulty level {pinfo['difficulty_level']})")
     try:
         logger.info(f"Control mode: {describe_control_mode(env)}")
     except Exception as e:  # noqa: BLE001
@@ -219,6 +335,9 @@ def main(cfg: DictConfig):
     logger.info(f"Task Instruction: {task_instruction}")
 
     collected, attempt, num_success = 0, 0, 0
+    # Per-KEPT-episode variant provenance, index-aligned with worker.collected_episodes (each kept
+    # rollout appends exactly one episode there).
+    episode_variants = []
     # Early finish: press ESC in the teleop window at any time to STOP collecting and save what has
     # been collected so far. ESC raises KeyboardInterrupt from the worker's render loop, which we catch
     # here and fall through to the save path below. (The current in-progress rollout is discarded;
@@ -226,6 +345,13 @@ def main(cfg: DictConfig):
     finished_early = False
     try:
         while collected < num_target:
+            if attempt > 0 and cycler is not None:
+                # Next rollout, next perturbation variant: rebuild the env and re-point the worker at
+                # it. The variant advances per ATTEMPT, not per kept rollout, so success / intervention
+                # filtering cannot bias the collected set toward whichever variants are easiest.
+                env.close()
+                env, task_info, variant_attrs = build_next_env()
+                worker.rebind_env(env)
             steps, human_steps, stored, success = worker.rollout_episode(
                 f"ep{attempt}", phase="COLLECT", store=True,
                 require_success=require_success, require_intervention=keep_only_hitl,
@@ -233,9 +359,15 @@ def main(cfg: DictConfig):
             attempt += 1
             num_success += int(bool(success))
             collected += int(stored > 0)
+            if stored > 0:
+                episode_variants.append(dict(variant_attrs))
+            variant_note = (
+                f" variant={variant_attrs['variant_task_id']} ({variant_attrs['perturbation_category']})"
+                if cycler is not None else ""
+            )
             logger.info(
                 f"  rollout {attempt}: success={bool(success)} steps={steps} human_steps={human_steps} "
-                f"stored={stored} | kept {collected}/{num_target}"
+                f"stored={stored}{variant_note} | kept {collected}/{num_target}"
             )
     except KeyboardInterrupt:
         finished_early = True
@@ -275,7 +407,18 @@ def main(cfg: DictConfig):
         "created": datetime.now().isoformat(timespec="seconds"),
         "pi0_checkpoint": str(pi0_checkpoint),
         "env_name": str(cfg.env.env_name),
-        "task_id": int(cfg.env.task_id),
+        "task_id": int(task_info.get("task_id", cfg.env.task_id)),
+        # Which LIBERO checkout / perturbed task these corrections came from. Task ids are ambiguous
+        # across the two checkouts, so the name + perturbation are what make the dataset traceable.
+        "libero_task_info": task_info,
+        # Perturbation sampling: task_id above is the BASE task and each rollout ran a different
+        # variant of `perturbation` (see the per-demo variant_* attrs for which one).
+        "perturbation": perturbation,
+        "variant_sampling": str(OmegaConf.select(cfg, "env.variant_sampling", default="shuffle")),
+        # The seed actually used (random when env.variant_seed was null) -- pass it back in to replay.
+        "variant_seed": variant_seed,
+        "variant_pool": [v.task_id for v in cycler.variants] if cycler is not None else None,
+        "variant_pool_size": cycler.num_variants if cycler is not None else None,
         "seed": int(seed),
         "max_episode_steps": int(cfg.env.max_episode_steps),
         "action_exec_len": action_exec_len,
@@ -292,6 +435,7 @@ def main(cfg: DictConfig):
     stats = _write_h5(
         worker.collected_episodes, output_path,
         action_min=action_min, action_max=action_max, meta_extra=meta_extra,
+        episode_variants=episode_variants if cycler is not None else None,
     )
     logger.success(
         f"Wrote {stats['num_demos']} demos / {stats['total_transitions']} transitions "

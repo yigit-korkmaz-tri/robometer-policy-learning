@@ -11,3 +11,11 @@
 [submodule "robometer"]
 	path = third_party/robometer
 	url = git@github.com:robometer/robometer.git
+[submodule "third_party/LIBERO-plus"]
+	# Robustness benchmark (10,030 perturbed tasks). Deliberately NOT pip-installed: it ships the same
+	# top-level `libero` package as LIBERO above, so only one can be importable. Selected per run via
+	# env.libero_plus=true (robometer_policy_learning/envs/libero_plus.py). Assets are a separate
+	# 6.4 GB download -- see scripts/setup_libero_plus.sh and docs/LIBERO_PLUS.md.
+	path = third_party/LIBERO-plus
+	url = https://github.com/sylvestf/LIBERO-plus.git
+	branch = main

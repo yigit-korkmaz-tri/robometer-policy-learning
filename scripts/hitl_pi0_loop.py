@@ -30,6 +30,12 @@ Example:
         --collect-num-rollouts 5 --num-train-steps 3000 --eval-num-episodes 20 \
         --repo-id-prefix yourname/libero_hitl --exp-prefix hitl_t575859 \
         --libero-base-suite libero_90 --libero-base-num-demos 10  --train-config pi05_libero_hitl_lora
+
+LIBERO-plus robustness loop -- BASE tasks 3 and 7, every rollout and eval episode under a different
+camera perturbation (see docs/LIBERO_PLUS.md):
+    uv run python scripts/hitl_pi0_loop.py --rounds 3 --env-name libero_spatial --task-ids 3 7 \
+        --perturbation camera --variant-seed 0 --collect-num-rollouts 5 --eval-num-episodes 20 \
+        --repo-id-prefix yourname/libero_plus_hitl --exp-prefix hitl_plus_camera
 """
 
 import argparse
@@ -37,6 +43,7 @@ import glob
 import os
 import subprocess
 import sys
+import time
 import datetime
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -70,6 +77,33 @@ def main():
                     help="Task ids (from --env-name) to run each round: corrections are collected for "
                          "every task, aggregated into one LeRobot repo, and one policy is trained.")
     ap.add_argument("--env-name", default="libero_90", help="LIBERO suite for collection/eval.")
+    # LIBERO-plus robustness benchmark (see docs/LIBERO_PLUS.md). Applies to BOTH the eval and collect
+    # steps, so a round measures and corrects the same perturbed tasks. Task ids under --libero-plus
+    # index the expanded suites (2402-2591 tasks), NOT plain LIBERO's 10 -- list them with
+    # robometer_policy_learning.envs.libero_plus.list_tasks(). libero_90 is identical in both.
+    ap.add_argument("--libero-plus", action="store_true",
+                    help="Collect/eval on LIBERO-plus perturbed task variants instead of plain LIBERO.")
+    ap.add_argument("--init-state-index", default=None,
+                    help="env.init_state_index for collect/eval: int, 'cycle', 'random', 'null' or "
+                         "'auto' (default; = 0 under --libero-plus, unset otherwise).")
+    # Per-episode perturbation sampling: --task-ids then means BASE task ids (0-9) and every rollout /
+    # eval episode runs a different variant of this family. The same --variant-seed is passed to both
+    # steps of every round, so each round walks the same perturbation sequence and the across-round
+    # success-rate curve is comparable.
+    ap.add_argument("--perturbation", default=None,
+                    help="LIBERO-plus perturbation family to sample variants from (background, camera, "
+                         "language, light, layout, robot, noise, or 'all'). Implies --libero-plus; "
+                         "--task-ids become BASE task ids.")
+    ap.add_argument("--variant-seed", type=int, default=None,
+                    help="Seed for the per-episode variant order. Default: a random seed drawn once and "
+                         "held fixed across ALL rounds, so every round's eval walks the same "
+                         "perturbations and the success-rate curve stays comparable.")
+    # Collection and eval share one variant pool, so with a single seed they walk the SAME variant
+    # sequence -- i.e. the eval mostly re-measures the variants that were just corrected. Give the
+    # collect step its own seed to draw a different sequence from the same pool instead.
+    ap.add_argument("--collect-variant-seed", type=int, default=None,
+                    help="Separate variant seed for the COLLECT step (default: same as --variant-seed, "
+                         "which makes collection and eval visit the same variants in the same order).")
     ap.add_argument("--collect-num-rollouts", type=int, default=10, help="Rollouts collected PER task.")
     ap.add_argument("--num-train-steps", type=int, default=3000)
     # Per-round evaluation of the current policy on the task suite (round 0 = base policy).
@@ -147,6 +181,30 @@ def main():
 
     task_ids_str = "[" + ",".join(str(t) for t in args.task_ids) + "]"
 
+    # Shared LIBERO-plus overrides, appended to both the eval and collect commands each round.
+    libero_overrides = []
+    if args.libero_plus or args.perturbation:
+        libero_overrides.append("env.libero_plus=true")
+    if args.init_state_index is not None:
+        libero_overrides.append(f"env.init_state_index={args.init_state_index}")
+    if args.perturbation:
+        libero_overrides.append(f"env.perturbation={args.perturbation}")
+    # Per-step variant seeds: identical unless --collect-variant-seed decouples them. The seed is
+    # resolved HERE rather than left to each subprocess, because a null seed makes every script draw its
+    # own random one -- which would give each round a different perturbation sequence and make the
+    # across-round success-rate curve meaningless.
+    eval_overrides = list(libero_overrides)
+    collect_overrides = list(libero_overrides)
+    if args.perturbation:
+        variant_seed = args.variant_seed
+        if variant_seed is None:
+            variant_seed = int(time.time_ns() % (1 << 31))
+            print(f"No --variant-seed given; drew variant_seed={variant_seed} for every round "
+                  f"(pass it back with --variant-seed to replay this perturbation sequence).")
+        collect_seed = args.collect_variant_seed if args.collect_variant_seed is not None else variant_seed
+        eval_overrides.append(f"env.variant_seed={variant_seed}")
+        collect_overrides.append(f"env.variant_seed={collect_seed}")
+
     for r in range(args.start_round, args.rounds):
         repo_id = f"{args.repo_id_prefix}_r{r}"
         exp_name = f"{args.exp_prefix}_r{r}"
@@ -164,6 +222,7 @@ def main():
                 f"eval.num_episodes={args.eval_num_episodes}",
                 f"pi0.checkpoint={collect_ckpt}",
                 f"hydra.run.dir={eval_dir}",
+                *eval_overrides,
             ]
             if collect_cfg_name:
                 eval_cmd.append(f"pi0.config_name={collect_cfg_name}")
@@ -184,6 +243,7 @@ def main():
                 f"pi0.checkpoint={collect_ckpt}",
                 f"hitl.store_only_human={str(store_only_human).lower()}",
                 f"hitl.rollout_pool_size={0 if args.train_config == 'pi05_libero_hitl_lora' else 15}",
+                *collect_overrides,
             ]
             if collect_cfg_name:
                 collect_cmd.append(f"pi0.config_name={collect_cfg_name}")
@@ -262,6 +322,7 @@ def main():
             f"eval.num_episodes={args.eval_num_episodes}",
             f"pi0.checkpoint={collect_ckpt}",
             f"hydra.run.dir={eval_dir}",
+            *eval_overrides,
         ]
         if collect_cfg_name:
             eval_cmd.append(f"pi0.config_name={collect_cfg_name}")

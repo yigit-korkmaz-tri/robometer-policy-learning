@@ -100,7 +100,6 @@ class Pi0LiberoHitlWorker:
         video_dir: str = None,
         video_fps: int = 20,
     ):
-        self.env = env
         self.pi0 = pi0_wrapper
         self.action_dim = int(action_dim)
         self.action_exec_len = max(1, int(action_exec_len))
@@ -126,14 +125,7 @@ class Pi0LiberoHitlWorker:
             os.makedirs(self.video_dir, exist_ok=True)
 
         # Reach the underlying robosuite env (LIBERO is robosuite-based) for teleop + rendering.
-        self.base_env = _find_robosuite_env(env)
-        self.robot = self.base_env.robots[0]
-        self.controller = self.robot.controller
-        if bool(getattr(self.controller, "use_delta", True)) is False:
-            raise NotImplementedError(
-                "Pi0LiberoHitlWorker only supports delta-mode controllers (LIBERO default OSC_POSE); "
-                f"got an absolute-pose controller ({getattr(self.controller, 'name', '?')})."
-            )
+        self.rebind_env(env)
 
         # Kept episodes accumulate here (each is a list of per-step transition dicts).
         self.collected_episodes: List[List[Dict]] = []
@@ -170,6 +162,26 @@ class Pi0LiberoHitlWorker:
         self._input2action = input2action
         self.toggle = TakeoverToggle(takeover_key)
         logger.info(f"HITL teleop device: {self.teleop_device} (takeover key: '{takeover_key}')")
+
+    # -----------------------------------------------------------------------------------------
+    def rebind_env(self, env):
+        """Point the worker at a (re)built env, re-resolving the robosuite handles it teleops through.
+
+        Used when each rollout runs a different LIBERO-plus perturbation variant: a variant is a
+        distinct MuJoCo scene, so the env must be rebuilt per episode. Only the env-derived handles are
+        replaced -- the teleop device (SpaceMouse HID handle / keyboard listener), the takeover toggle,
+        the cv2 window and ``collected_episodes`` all survive, so rollouts across many variants
+        accumulate into one dataset without reopening the input device.
+        """
+        self.env = env
+        self.base_env = _find_robosuite_env(env)
+        self.robot = self.base_env.robots[0]
+        self.controller = self.robot.controller
+        if bool(getattr(self.controller, "use_delta", True)) is False:
+            raise NotImplementedError(
+                "Pi0LiberoHitlWorker only supports delta-mode controllers (LIBERO default OSC_POSE); "
+                f"got an absolute-pose controller ({getattr(self.controller, 'name', '?')})."
+            )
 
     # -----------------------------------------------------------------------------------------
     def close(self):
