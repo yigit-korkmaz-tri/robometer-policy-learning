@@ -6,6 +6,20 @@ A flexible reinforcement \ imitation learning framework supporting multiple algo
 >
 > This repository is under active development, so some modules and features may change over time. You may encounter issues when using features that are not yet documented in this README. Please feel free to open an issue — we will do our best to help.
 
+## Documentation
+
+| Document | Contents |
+| --- | --- |
+| [CLAUDE.md](CLAUDE.md) | orientation and repo-wide conventions (also loaded automatically by Claude Code) |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | package map, how a training run is wired, extension recipes |
+| [docs/WORKFLOWS.md](docs/WORKFLOWS.md) | runbooks for every pipeline: supervised, RL, DSRL, HITL, real robot |
+| [docs/DATA_FORMATS.md](docs/DATA_FORMATS.md) | observation/action contracts, HDF5 + LeRobot schemas, pi0 format |
+| [docs/CONFIGS.md](docs/CONFIGS.md) | Hydra layout and which config belongs to which script |
+| [docs/GOTCHAS.md](docs/GOTCHAS.md) | non-obvious constraints — read before your first run |
+| [hitl_pi05_openpi_reference.md](hitl_pi05_openpi_reference.md) | the pi0.5 HITL pipeline in detail |
+| [docs/LIBERO_PLUS.md](docs/LIBERO_PLUS.md) | LIBERO-plus robustness benchmark |
+| [docs/REAL_ROBOT_README.md](docs/REAL_ROBOT_README.md) | real-robot setup |
+
 ## Table of Contents
 
 - [Setup](#setup)
