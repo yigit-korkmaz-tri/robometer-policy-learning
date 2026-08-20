@@ -27,8 +27,12 @@ from robometer_policy_learning.buffers.h5_replay_buffer import H5ReplayBuffer
 # / eval server is configured, so they are imported lazily in those branches below -- that keeps this
 # module importable in a pi0/LIBERO environment installed without the robometer extra.
 from robometer_policy_learning.buffers.success_failure_replay_buffer import SuccessFailureReplayBuffer
-from robometer_policy_learning.buffers.remote_reward_relabel_buffer import AsyncRewardRelabelBuffer
-from robometer_policy_learning.distributed.clients.reward_relabel_client import RewardRelabelClient
+# Same treatment for the reward-relabel path: importing it pulls in distributed.protos, whose
+# __init__ runs protoc over learner.proto / reward_relabel.proto at import time. Those .proto
+# sources are excluded by .gitignore (`*.proto`), so a fresh clone has only the generated
+# *_pb2_grpc.py and protoc fails -- breaking every consumer of this module, including
+# scripts/serve_policy.py, which just wants resolve_checkpoint_dir. Only the
+# use_async_reward_relabel branch of create_buffer needs these, so import them there.
 
 # Setup imports
 from transformers import AutoModel, AutoImageProcessor
@@ -569,6 +573,10 @@ def create_buffer(
             raise ValueError(
                 "Distributed reward relabeling is only supported for online buffers (h5_paths must be None)"
             )
+
+        # Imported here, not at module scope: see the NOTE by the buffer imports.
+        from robometer_policy_learning.buffers.remote_reward_relabel_buffer import AsyncRewardRelabelBuffer
+        from robometer_policy_learning.distributed.clients.reward_relabel_client import RewardRelabelClient
 
         # Create underlying buffer (without reward relabeling)
         underlying_buffer = ReplayBuffer(
