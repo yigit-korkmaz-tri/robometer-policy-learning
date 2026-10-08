@@ -105,7 +105,7 @@ uv run python scripts/train_supervised.py --config-path=../robometer_policy_lear
   --config-name=robomimic_lowdim_bc env.h5_dataset_path=/path/to/data.hdf5
 
 # pi0.5 HITL round on LIBERO (needs a display for teleop)
-uv run python scripts/hitl_pi0_loop.py --rounds 3 --env-name libero_90 --task-ids 57 58 59 \
+uv run python scripts/hitl_pi0_loop.py --rounds 3 --env-name libero_90 --eval-task-ids 57 58 59 \
   --repo-id-prefix <you>/libero_hitl --exp-prefix hitl_t575859 --dry-run
 ```
 

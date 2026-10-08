@@ -35,11 +35,11 @@ teleop never share a process). Per round **R** over a suite of task ids:
 
 Example:
 ```bash
-uv run python scripts/hitl_pi0_loop.py --rounds 3 --env-name libero_90 --task-ids 57 58 59 \
+uv run python scripts/hitl_pi0_loop.py --rounds 3 --env-name libero_90 --eval-task-ids 57 58 59 \
     --collect-num-rollouts 5 --num-train-steps 3000 --eval-num-episodes 20 \
     --repo-id-prefix you/libero_hitl --exp-prefix hitl_t575859 \
     --train-config pi05_libero_flow_mile_lora \
-    --libero-base-suite libero_90 --libero-base-num-demos 10
+    --libero-base-num-demos 10
 ```
 Select the objective with `--train-config`: `pi05_libero_hitl_lora` (HG-DAgger) or
 `pi05_libero_flow_mile_lora` (Flow-MILE).

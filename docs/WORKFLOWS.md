@@ -187,13 +187,21 @@ uv run python third_party/dsrl_openpi/scripts/train.py pi05_libero_hitl_lora ...
 
 Or drive all of it:
 ```bash
-uv run python scripts/hitl_pi0_loop.py --rounds 3 --env-name libero_90 --task-ids 57 58 59 \
+uv run python scripts/hitl_pi0_loop.py --rounds 3 --env-name libero_90 --eval-task-ids 57 58 59 \
   --collect-num-rollouts 5 --num-train-steps 3000 --eval-num-episodes 20 \
   --repo-id-prefix <you>/libero_hitl --exp-prefix hitl_t575859 \
-  --libero-base-suite libero_90 --libero-base-num-demos 10 --train-config pi05_libero_hitl_lora
+  --libero-base-num-demos 10 --train-config pi05_libero_hitl_lora
 ```
 `--dry-run` prints every command without executing — use it first. Each round runs its steps as
 separate subprocesses so JAX training and robosuite teleop never share a process.
+
+`--eval-task-ids` is the fixed eval set; `--collect-task-ids` (same suite, default = the eval set) picks
+where corrections are collected, and `--collect-schedule "57;57 58;57 58 59"` sets explicit per-round lists
+drawn from them (`;` separates rounds, the last repeats; default all collect tasks, every round). `--libero-base-num-demos N` (> 0) adds N expert demos per
+task from the same suite for anti-forgetting (default 0 = none). The
+loop asks before each new round whether to continue (`--no-round-prompt` to skip). The bash variants —
+`scripts/hitl_pi0_loop.sh` (EC2 over SSH) and `scripts/hitl_pi0_loop_seperated.sh` (EC2 by hand via
+the Hugging Face Hub) — take the same task flags.
 
 Teleop controls: `Tab` take/release, `q` abort episode, `ESC` finish collection early (saves what was
 collected). Code: `utils/pi0_hitl_utils.py::Pi0LiberoHitlWorker`.

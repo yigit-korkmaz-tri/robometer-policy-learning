@@ -36,6 +36,10 @@ from robometer_policy_learning.utils.training_utils import (
 )
 from robometer_policy_learning.utils.policy_serving import build_policy_metadata
 from robometer_policy_learning.utils.transitions_transforms import ImageAugmentationTransform
+from robometer_policy_learning.utils.numpy_compat import allow_numpy2_rng_pickles
+
+# Actors trained in the robometer (numpy 2) env pickle an RNG that numpy 1.26 can't rebuild.
+allow_numpy2_rng_pickles()
 
 ALG_TO_CONFIG = {
     "iql": IQLConfig,

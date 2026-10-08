@@ -125,8 +125,11 @@ from robometer_policy_learning.utils.hitl_utils import (
     load_precollected_hitl,
 )
 from robometer_policy_learning.utils.training_utils import save_checkpoint
+from robometer_policy_learning.utils.numpy_compat import allow_numpy2_rng_pickles
 
 logger = get_logger()
+# Actors trained in the robometer (numpy 2) env pickle an RNG that numpy 1.26 can't rebuild.
+allow_numpy2_rng_pickles()
 
 # Algorithms usable for HITL training. "bc"/"mile" need a Gaussian actor (explicit action
 # distribution); "dp"/"diffusion_mile" need a DiffusionActor (DP-pretrained); "flow_mile" needs a

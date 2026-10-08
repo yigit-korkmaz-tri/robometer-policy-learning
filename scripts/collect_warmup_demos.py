@@ -59,8 +59,11 @@ from robometer_policy_learning.utils.hitl_utils import (  # noqa: E402
     analyze_intervention_segments,
     describe_control_mode,
 )
+from robometer_policy_learning.utils.numpy_compat import allow_numpy2_rng_pickles
 
 logger = get_logger()
+# Actors trained in the robometer (numpy 2) env pickle an RNG that numpy 1.26 can't rebuild.
+allow_numpy2_rng_pickles()
 
 
 def main():

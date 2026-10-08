@@ -40,6 +40,7 @@ import numpy as np
 import torch
 
 from robometer_policy_learning.utils.logging_compat import get_logger
+from robometer_policy_learning.utils.numpy_compat import allow_numpy2_rng_pickles
 from robometer_policy_learning.utils.policy_serving import (
     METADATA_FILENAME,
     PolicyMetadata,
@@ -49,6 +50,8 @@ from robometer_policy_learning.utils.policy_serving import (
 from robometer_policy_learning.utils.training_utils import resolve_checkpoint_dir
 
 logger = get_logger()
+# Actors trained in the robometer (numpy 2) env pickle an RNG that numpy 1.26 can't rebuild.
+allow_numpy2_rng_pickles()
 
 
 def load_actor(load_dir: str, checkpoint=None, device: torch.device = None):

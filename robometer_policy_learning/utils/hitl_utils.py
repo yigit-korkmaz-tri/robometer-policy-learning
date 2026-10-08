@@ -70,6 +70,70 @@ class TakeoverToggle:
             pass
 
 
+# 3Dconnexion's USB vendor id. robosuite's default product id (0xc62f) is the SpaceMouse *Wireless*, so
+# any other model (e.g. the Compact, 0xc635) fails to open with a bare "OSError: open failed".
+_3DCONNEXION_VENDOR_ID = 0x256F
+_SPACEMOUSE_UDEV_HINT = (
+    "If the device is plugged in, this is usually a permissions problem: /dev/hidraw* is root-only by "
+    "default. Grant your user access with a udev rule, then unplug/replug the SpaceMouse:\n"
+    "  echo 'KERNEL==\"hidraw*\", ATTRS{idVendor}==\"256f\", MODE=\"0660\", GROUP=\"plugdev\"' "
+    "| sudo tee /etc/udev/rules.d/99-spacemouse.rules\n"
+    "  sudo udevadm control --reload-rules && sudo udevadm trigger\n"
+    "(your user must be in the 'plugdev' group). Also check no other process holds it (e.g. spacenavd)."
+)
+
+
+def open_spacemouse(pos_sensitivity: float = 1.0, rot_sensitivity: float = 1.0):
+    """Open the first connected 3Dconnexion SpaceMouse, whatever the model.
+
+    Three things robosuite's ``SpaceMouse`` gets wrong out of the box on Linux, all fixed here:
+      * it opens a hard-coded product id (the Wireless) -- we look the connected model up instead;
+      * cython-hidapi's ``hid`` module is the *libusb* backend on Linux, which opens the raw USB node
+        under /dev/bus/usb (and detaches the kernel driver) rather than /dev/hidraw*, so a hidraw udev
+        rule doesn't apply. The same package ships a ``hidraw`` module with an identical device API;
+        robosuite is pointed at it for construction (``hid`` stays the fallback, e.g. on macOS);
+      * its report parser branches on the GLOBAL ``macros.SPACEMOUSE_PRODUCT_ID`` (the Compact,
+        50741, sends translation and rotation as separate reports), not on the id it opened -- so the
+        macro is set to the detected id, or rotation would never update.
+    Also turns hidapi's uninformative ``open failed`` into an actionable error.
+    """
+    import robosuite.devices.spacemouse as rs_spacemouse
+
+    try:
+        import hidraw as hid_backend
+    except ImportError:
+        import hid as hid_backend
+
+    found = [d for d in hid_backend.enumerate() if d["vendor_id"] == _3DCONNEXION_VENDOR_ID]
+    if not found:
+        raise RuntimeError(
+            f"No 3Dconnexion device (USB vendor 0x{_3DCONNEXION_VENDOR_ID:04x}) found. Is the SpaceMouse "
+            "plugged in? `lsusb | grep -i 3dconnexion` should list it."
+        )
+    product_id = found[0]["product_id"]
+    if len({d["product_id"] for d in found}) > 1:
+        logger.warning(f"Several 3Dconnexion devices connected; using product id 0x{product_id:04x}.")
+    rs_spacemouse.macros.SPACEMOUSE_VENDOR_ID = _3DCONNEXION_VENDOR_ID
+    rs_spacemouse.macros.SPACEMOUSE_PRODUCT_ID = product_id
+    default_backend, rs_spacemouse.hid = rs_spacemouse.hid, hid_backend  # only read inside __init__
+    try:
+        device = rs_spacemouse.SpaceMouse(
+            vendor_id=_3DCONNEXION_VENDOR_ID,
+            product_id=product_id,
+            pos_sensitivity=pos_sensitivity,
+            rot_sensitivity=rot_sensitivity,
+        )
+        logger.info(f"SpaceMouse 0x{product_id:04x} opened via the '{hid_backend.__name__}' hidapi backend.")
+        return device
+    except OSError as e:
+        raise RuntimeError(
+            f"Found SpaceMouse 0x{_3DCONNEXION_VENDOR_ID:04x}:0x{product_id:04x} but could not open it ({e}). "
+            + _SPACEMOUSE_UDEV_HINT
+        ) from e
+    finally:
+        rs_spacemouse.hid = default_backend
+
+
 def _find_robosuite_env(env):
     """Walk the gym/vector wrapper stack down to the underlying robosuite env (has ``.robots``)."""
     e = env
@@ -458,9 +522,7 @@ class HitlRolloutWorker:
 
                     self._device = Keyboard(pos_sensitivity=pos_sensitivity, rot_sensitivity=rot_sensitivity)
                 elif self.teleop_device == "spacemouse":
-                    from robosuite.devices import SpaceMouse
-
-                    self._device = SpaceMouse(pos_sensitivity=pos_sensitivity, rot_sensitivity=rot_sensitivity)
+                    self._device = open_spacemouse(pos_sensitivity=pos_sensitivity, rot_sensitivity=rot_sensitivity)
                 else:
                     raise ValueError(
                         f"teleop_device must be 'keyboard' or 'spacemouse', got {teleop_device!r}."

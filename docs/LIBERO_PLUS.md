@@ -218,7 +218,7 @@ to both the eval and collect step of every round, so each round measures and cor
 perturbation sequence:
 
 ```bash
-uv run python scripts/hitl_pi0_loop.py --rounds 3 --env-name libero_spatial --task-ids 3 7 \
+uv run python scripts/hitl_pi0_loop.py --rounds 3 --env-name libero_spatial --eval-task-ids 3 7 \
     --perturbation camera --variant-seed 0 --collect-num-rollouts 5 --eval-num-episodes 20 \
     --repo-id-prefix yourname/libero_plus_hitl --exp-prefix hitl_plus_camera
 ```

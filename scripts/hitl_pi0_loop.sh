@@ -5,7 +5,7 @@
 # Bash counterpart of scripts/hitl_pi0_loop.py, but the fine-tuning runs on a remote EC2 GPU box:
 #
 #   LOCAL  (this machine, needs a display for teleop):
-#     0. eval     scripts/eval_pi0_libero.py           success rate on the task suite (skip --no-eval)
+#     0. eval     scripts/eval_pi0_libero.py           success rate on the task suite (--skip-init-eval skips the first round's)
 #     1. collect  scripts/collect_hitl_libero_pi0.py   per-task corrections HDF5 (ESC to finish early)
 #     2. export   scripts/export_hitl_to_lerobot.py    LeRobot repo (LOCAL)  --rsync-->  EC2
 #   EC2    (remote GPU, over SSH; dataset rsync'd from LOCAL, not the Hub):
@@ -19,11 +19,21 @@
 # LOCAL, pass --remote-lerobot-home to point at EC2's LeRobot cache.
 #
 # Example:
-#   scripts/hitl_pi0_loop.sh --rounds 3 --env-name libero_90 --task-ids "57 58 59" \
+#   scripts/hitl_pi0_loop.sh --rounds 3 --env-name libero_90 --eval-task-ids "57 58 59 60" --collect-task-ids "57 58 59" \
 #     --repo-id-prefix you/libero_hitl --exp-prefix hitl_t575859 --train-config pi05_libero_flow_mile_lora \
-#     --libero-base-suite libero_90 --libero-base-num-demos 10 \
+#     --collect-schedule "57;57 58;57 58 59" --libero-base-num-demos 10 \
 #     --ec2-host ubuntu@ec2-1-2-3-4.compute.amazonaws.com --ec2-repo /home/ubuntu/robometer-policy-learning \
 #     --ssh-key ~/.ssh/ec2.pem --remote-lerobot-home /home/ubuntu/.cache/huggingface/lerobot
+#
+# Task ids (one suite, --env-name): --eval-task-ids are evaluated every round and at the end (fixed);
+# --collect-task-ids get corrections collected (default: the eval set). --collect-schedule "57;57 58;57 58 59"
+# sets explicit per-round lists drawn from them (';' separates rounds, the last list repeats; default: all
+# collect tasks every round). --libero-base-num-demos N > 0 folds N LIBERO expert demos per task from the
+# same suite into every round (anti-forgetting); they default to the tasks collected so far, not the
+# eval set.
+#
+# Before every round after the first the loop asks whether to continue; 'n' jumps to the final eval of the
+# latest checkpoint. --no-round-prompt disables the question.
 #
 # Use --dry-run to print every local/remote command (and both rsyncs) without executing.
 # ============================================================================================
@@ -33,14 +43,17 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # ---- Defaults (mirror hitl_pi0_loop.py) ----
 ROUNDS="2"
-TASK_IDS="57 58"                       # space-separated, e.g. "57 58 59"
+EVAL_TASK_IDS="57 58"                  # space-separated, e.g. "57 58 59"; evaluated every round (fixed)
+COLLECT_TASK_IDS=""                    # same suite, space-separated; empty => EVAL_TASK_IDS
+COLLECT_SCHEDULE=""                    # per-round lists, ';'-separated, e.g. "57;57 58" (ids from COLLECT_TASK_IDS); empty => all, every round
+NO_ROUND_PROMPT=false
 ENV_NAME="libero_90"
 COLLECT_NUM_ROLLOUTS=2
 NUM_TRAIN_STEPS=10
 FSDP_DEVICES=1                         # EC2 train: shard the model across this many GPUs (1 = off)
 EVAL_CONFIG="libero_eval"
 EVAL_NUM_EPISODES=2
-NO_EVAL=false
+SKIP_INIT_EVAL=false                   # skip the eval at the start of round START_ROUND (later evals always run)
 REPO_ID_PREFIX="ykorkmaz/libero_ec2_test"                 # HF repo id prefix (namespace/name); round R -> <prefix>_r{R}
 EXP_PREFIX="libero_ec2_test"
 TRAIN_CONFIG="pi05_libero_hitl_lora"
@@ -50,17 +63,15 @@ BASE_PI0_CHECKPOINT="gs://openpi-assets/checkpoints/pi05_libero/"
 BASE_PI0_CONFIG_NAME=""
 INIT_WEIGHTS="gs://openpi-assets/checkpoints/pi05_libero/params"
 BASE_DEMOS=""                     # space-separated glob(s)
-LIBERO_BASE_SUITE=""
-LIBERO_BASE_TASK_IDS=""           # space-separated; default = TASK_IDS
-LIBERO_BASE_NUM_DEMOS=0
+LIBERO_BASE_TASK_IDS=""           # space-separated; default = every task collected so far
+LIBERO_BASE_NUM_DEMOS=0           # LIBERO expert demos per task from the --env-name suite; 0 => none
 WORKDIR="$REPO_ROOT/outputs"
 OPENPI_DIR="$REPO_ROOT/third_party/dsrl_openpi"
 LOCAL_CKPT_BASE=""                # default <OPENPI_DIR>/checkpoints
 LEROBOT_HOME=""                   # local LeRobot cache root; default ${HF_LEROBOT_HOME:-~/.cache/huggingface/lerobot}
-REMOTE_LEROBOT_HOME="/opt/dlami/nvme/cache/huggingface/lerobot"            # EC2 LeRobot cache root; default = same path as local (--remote-lerobot-home to override)
+REMOTE_LEROBOT_HOME="/opt/dlami/nvme/cache/huggingface/lerobot"            # EC2 LeRobot cache root (empty => same path as local)
 REMOTE_OPENPI_DATA_HOME="/opt/dlami/nvme/cache/openpi"
 REMOTE_UV_CACHE_DIR="/opt/dlami/nvme/cache/uv"
-WEIGHT_LOADER_FLAG="--weight-loader.params-path"
 XLA_MEM=0.95
 START_ROUND=0
 DRY=false
@@ -68,27 +79,30 @@ DRY=false
 # ---- Remote / SSH ----
 EC2_HOST="ubuntu@10.161.51.28"                       # user@host  (required unless --dry-run)
 EC2_REPO="/opt/dlami/nvme/robometer-policy-learning"                       # repo path on EC2 (required unless --dry-run)
-REMOTE_OPENPI_DIR="$EC2_REPO/third_party/dsrl_openpi"              # default <EC2_REPO>/third_party/dsrl_openpi
+REMOTE_OPENPI_DIR=""              # default <EC2_REPO>/third_party/dsrl_openpi (resolved after --ec2-repo)
 REMOTE_CKPT_BASE=""               # default <REMOTE_OPENPI_DIR>/checkpoints
 SSH_KEY="$HOME/.ssh/yigit.pem"
 SSH_OPTS=""
 HF_TOKEN=""
 WANDB_API_KEY="${WANDB_API_KEY:-}"
 
-usage() { sed -n '2,40p' "${BASH_SOURCE[0]}"; exit "${1:-0}"; }
+usage() { sed -n '2,39p' "${BASH_SOURCE[0]}"; exit "${1:-0}"; }
 
 # ---- Arg parsing ----
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --rounds) ROUNDS="$2"; shift 2;;
-    --task-ids) TASK_IDS="$2"; shift 2;;
+    --eval-task-ids) EVAL_TASK_IDS="$2"; shift 2;;
+    --collect-task-ids) COLLECT_TASK_IDS="$2"; shift 2;;
+    --collect-schedule) COLLECT_SCHEDULE="$2"; shift 2;;
+    --no-round-prompt) NO_ROUND_PROMPT=true; shift;;
     --env-name) ENV_NAME="$2"; shift 2;;
     --collect-num-rollouts) COLLECT_NUM_ROLLOUTS="$2"; shift 2;;
     --num-train-steps) NUM_TRAIN_STEPS="$2"; shift 2;;
     --fsdp-devices) FSDP_DEVICES="$2"; shift 2;;
     --eval-config) EVAL_CONFIG="$2"; shift 2;;
     --eval-num-episodes) EVAL_NUM_EPISODES="$2"; shift 2;;
-    --no-eval) NO_EVAL=true; shift;;
+    --skip-init-eval) SKIP_INIT_EVAL=true; shift;;
     --repo-id-prefix) REPO_ID_PREFIX="$2"; shift 2;;
     --exp-prefix) EXP_PREFIX="$2"; shift 2;;
     --train-config) TRAIN_CONFIG="$2"; shift 2;;
@@ -98,7 +112,6 @@ while [[ $# -gt 0 ]]; do
     --base-pi0-config-name) BASE_PI0_CONFIG_NAME="$2"; shift 2;;
     --init-weights) INIT_WEIGHTS="$2"; shift 2;;
     --base-demos) BASE_DEMOS="$2"; shift 2;;
-    --libero-base-suite) LIBERO_BASE_SUITE="$2"; shift 2;;
     --libero-base-task-ids) LIBERO_BASE_TASK_IDS="$2"; shift 2;;
     --libero-base-num-demos) LIBERO_BASE_NUM_DEMOS="$2"; shift 2;;
     --workdir) WORKDIR="$2"; shift 2;;
@@ -108,7 +121,6 @@ while [[ $# -gt 0 ]]; do
     --remote-lerobot-home) REMOTE_LEROBOT_HOME="$2"; shift 2;;
     --remote-openpi-data-home) REMOTE_OPENPI_DATA_HOME="$2"; shift 2;;
     --remote-uv-cache-dir) REMOTE_UV_CACHE_DIR="$2"; shift 2;;
-    --weight-loader-flag) WEIGHT_LOADER_FLAG="$2"; shift 2;;
     --xla-mem-fraction) XLA_MEM="$2"; shift 2;;
     --start-round) START_ROUND="$2"; shift 2;;
     --dry-run) DRY=true; shift;;
@@ -126,8 +138,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ---- Validate + derive ----
-[[ -z "$ROUNDS" || -z "$TASK_IDS" || -z "$REPO_ID_PREFIX" || -z "$EXP_PREFIX" ]] && \
-  { echo "ERROR: --rounds, --task-ids, --repo-id-prefix, --exp-prefix are required." >&2; usage 1; }
+[[ -z "$ROUNDS" || -z "$EVAL_TASK_IDS" || -z "$REPO_ID_PREFIX" || -z "$EXP_PREFIX" ]] && \
+  { echo "ERROR: --rounds, --eval-task-ids, --repo-id-prefix, --exp-prefix are required." >&2; usage 1; }
 if ! $DRY; then
   [[ -z "$EC2_HOST" || -z "$EC2_REPO" ]] && \
     { echo "ERROR: --ec2-host and --ec2-repo are required (unless --dry-run)." >&2; usage 1; }
@@ -139,8 +151,27 @@ fi
 # same path on EC2 and point the remote steps at it. Default the remote to the same path as local.
 : "${LEROBOT_HOME:=${HF_LEROBOT_HOME:-$HOME/.cache/huggingface/lerobot}}"
 : "${REMOTE_LEROBOT_HOME:=$LEROBOT_HOME}"
-TASK_IDS_CSV="$(echo "$TASK_IDS" | tr -s ' ' ',')"
-[[ -z "$LIBERO_BASE_TASK_IDS" ]] && LIBERO_BASE_TASK_IDS="$TASK_IDS"
+EVAL_TASK_IDS_CSV="$(echo "$EVAL_TASK_IDS" | xargs | tr -s ' ' ',')"
+COLLECT_TASK_IDS="$(echo "${COLLECT_TASK_IDS:-$EVAL_TASK_IDS}" | tr ',' ' ' | xargs)"
+[[ "$COLLECT_TASK_IDS" =~ ^[0-9]+( [0-9]+)*$ ]] || \
+  { echo "ERROR: --collect-task-ids ('$COLLECT_TASK_IDS') must be space-separated task ids." >&2; exit 1; }
+# Per-round collection schedule: explicit task lists, ';'-separated -- "57;57 58;57 58 59" collects on 57
+# in round 0, 57 58 in round 1, 57 58 59 in round 2. The last list repeats; empty means all of
+# --collect-task-ids every round. Every scheduled id must be one of --collect-task-ids (catches typos).
+if [[ -n "$COLLECT_SCHEDULE" ]]; then IFS=';' read -ra SCHEDULE <<< "$COLLECT_SCHEDULE"; else SCHEDULE=("$COLLECT_TASK_IDS"); fi
+for i in "${!SCHEDULE[@]}"; do
+  SCHEDULE[i]="$(echo "${SCHEDULE[i]}" | tr ',' ' ' | xargs)"
+  [[ "${SCHEDULE[i]}" =~ ^[0-9]+( [0-9]+)*$ ]] || \
+    { echo "ERROR: --collect-schedule round $i ('${SCHEDULE[i]}') must be space-separated task ids." >&2; exit 1; }
+  for t in ${SCHEDULE[i]}; do
+    [[ " $COLLECT_TASK_IDS " == *" $t "* ]] || \
+      { echo "ERROR: --collect-schedule round $i has task $t, which is not in --collect-task-ids ($COLLECT_TASK_IDS)." >&2; exit 1; }
+  done
+done
+(( ${#SCHEDULE[@]} > ROUNDS )) && \
+  echo "WARNING: --collect-schedule has ${#SCHEDULE[@]} entries but --rounds=$ROUNDS; the extra ones are never used."
+[[ "$LIBERO_BASE_NUM_DEMOS" =~ ^[0-9]+$ ]] || \
+  { echo "ERROR: --libero-base-num-demos must be a non-negative integer." >&2; exit 1; }
 # HG-DAgger (pi05_libero_hitl_lora) trains on corrections only; Flow-MILE needs full trajectories.
 # --store-only-human overrides this; when unset (empty) we derive it from TRAIN_CONFIG as before.
 if [[ -z "$STORE_ONLY_HUMAN" ]]; then
@@ -182,29 +213,54 @@ run_remote() {  # run_remote <remote-shell-command-string>
 }
 capture_remote() { "${SSH[@]}" "$1"; }  # stdout only, for resolving the step dir
 
+collect_tasks() {  # collect_tasks <round> -> that round's collection task ids
+  local i=$(( $1 < ${#SCHEDULE[@]} ? $1 : ${#SCHEDULE[@]} - 1 ))
+  echo "${SCHEDULE[i]}"
+}
+tasks_collected_through() {  # tasks_collected_through <round> -> every id collected in rounds 0..round
+  local seen=" " t pr
+  for (( pr=0; pr<=$1; pr++ )); do
+    for t in $(collect_tasks "$pr"); do [[ "$seen" == *" $t "* ]] || seen+="$t "; done
+  done
+  echo $seen  # unquoted: trims the padding
+}
+confirm_next_round() {  # confirm_next_round <round>; no terminal => unattended, keep going
+  read -r -p $'\n'"Round $(( $1 - 1 )) finished. Continue to round $1? [Y/n] " REPLY </dev/tty || return 0
+  [[ ! "$REPLY" =~ ^[Nn] ]]
+}
+
 # ============================================================================================
 COLLECT_CKPT="$BASE_PI0_CHECKPOINT"      # LOCAL eval/collect policy
 COLLECT_CFG_NAME="$BASE_PI0_CONFIG_NAME" # LOCAL config_name (empty => path heuristic)
 REMOTE_INIT="$INIT_WEIGHTS"              # EC2 training init params
 ROUND_HDF5S=()                           # accumulate every round's corrections
+FINAL_EVAL_R="$ROUNDS"                   # index of the closing eval; earlier if the user stops
+
+echo "Eval tasks (every round): $EVAL_TASK_IDS"
+for (( r=START_ROUND; r<ROUNDS; r++ )); do echo "  round $r: collect on $(collect_tasks "$r")"; done
 
 for (( r=START_ROUND; r<ROUNDS; r++ )); do
+  if (( r > START_ROUND )) && ! $NO_ROUND_PROMPT && ! $DRY && ! confirm_next_round "$r"; then
+    echo "Stopping before round ${r}; evaluating the round $(( r - 1 )) checkpoint."
+    FINAL_EVAL_R="$r"; break
+  fi
   REPO_ID="${REPO_ID_PREFIX}_r${r}"
   EXP_NAME="${EXP_PREFIX}_r${r}"
-  echo -e "\n========== HITL ROUND ${r} =========="
+  ROUND_COLLECT_IDS="$(collect_tasks "$r")"
+  echo -e "\n========== HITL ROUND ${r} (collect on ${ROUND_COLLECT_IDS}) =========="
 
   # 0) [LOCAL] eval the current policy on the whole suite.
-  if ! $NO_EVAL; then
+  if ! { $SKIP_INIT_EVAL && (( r == START_ROUND )); }; then
     EVAL_DIR="$WORKDIR/eval_r${r}"
     EVAL_CMD=(env XLA_PYTHON_CLIENT_MEM_FRACTION="$XLA_MEM" uv run python scripts/eval_pi0_libero.py
-      --config-name "$EVAL_CONFIG" "env.env_name=$ENV_NAME" "env.task_ids=[$TASK_IDS_CSV]"
+      --config-name "$EVAL_CONFIG" "env.env_name=$ENV_NAME" "env.task_ids=[$EVAL_TASK_IDS_CSV]"
       "eval.num_episodes=$EVAL_NUM_EPISODES" "pi0.checkpoint=$COLLECT_CKPT" "hydra.run.dir=$EVAL_DIR")
     [[ -n "$COLLECT_CFG_NAME" ]] && EVAL_CMD+=("pi0.config_name=$COLLECT_CFG_NAME")
     run_local "$REPO_ROOT" "${EVAL_CMD[@]}"
   fi
 
-  # 1) [LOCAL] collect corrections for every task (ESC in the teleop window finishes early).
-  for t in $TASK_IDS; do
+  # 1) [LOCAL] collect corrections for this round's tasks (ESC in the teleop window finishes early).
+  for t in $ROUND_COLLECT_IDS; do
     ROUND_HDF5="$WORKDIR/round_${r}_task_${t}_rollouts.hdf5"
     ROUND_HDF5S+=("$ROUND_HDF5")
     COLLECT_CMD=(env XLA_PYTHON_CLIENT_MEM_FRACTION="$XLA_MEM" uv run python scripts/collect_hitl_libero_pi0.py
@@ -221,7 +277,7 @@ for (( r=START_ROUND; r<ROUNDS; r++ )); do
   if $DRY; then EXPORT_INPUTS=("${ROUND_HDF5S[@]}")
   else for p in "${ROUND_HDF5S[@]}"; do [[ -f "$p" ]] && EXPORT_INPUTS+=("$p"); done; fi
   HAS_BASE=false
-  { [[ -n "$BASE_DEMOS" ]] || [[ -n "$LIBERO_BASE_SUITE" ]]; } && HAS_BASE=true
+  { [[ -n "$BASE_DEMOS" ]] || (( LIBERO_BASE_NUM_DEMOS > 0 )); } && HAS_BASE=true
   if [[ ${#EXPORT_INPUTS[@]} -eq 0 ]] && ! $HAS_BASE; then
     echo "Round ${r}: no saved corrections and no base demos — skipping export/train."
     continue
@@ -232,8 +288,11 @@ for (( r=START_ROUND; r<ROUNDS; r++ )); do
     "$REPO_ROOT/scripts/export_hitl_to_lerobot.py" --repo-id "$REPO_ID")
   [[ ${#EXPORT_INPUTS[@]} -gt 0 ]] && EXPORT_CMD+=(--inputs "${EXPORT_INPUTS[@]}")
   [[ -n "$BASE_DEMOS" ]] && EXPORT_CMD+=(--base-demos $BASE_DEMOS)
-  if [[ -n "$LIBERO_BASE_SUITE" ]]; then
-    EXPORT_CMD+=(--libero-base-suite "$LIBERO_BASE_SUITE" --libero-base-task-ids $LIBERO_BASE_TASK_IDS
+  if (( LIBERO_BASE_NUM_DEMOS > 0 )); then
+    # Expert demos from the same suite. Default: tasks trained on so far -- not the eval set, whose
+    # not-yet-collected tasks would leak demos.
+    LB_TASK_IDS="${LIBERO_BASE_TASK_IDS:-$(tasks_collected_through "$r")}"
+    EXPORT_CMD+=(--libero-base-suite "$ENV_NAME" --libero-base-task-ids $LB_TASK_IDS
       --libero-base-num-demos "$LIBERO_BASE_NUM_DEMOS")
   fi
   run_local "$OPENPI_DIR" "${EXPORT_CMD[@]}"
@@ -257,7 +316,7 @@ uv run --frozen python scripts/compute_norm_stats.py --config-name $TRAIN_CONFIG
   run_remote "cd '$REMOTE_OPENPI_DIR' && ${REMOTE_HF_ENV}${REMOTE_WANDB_ENV}HF_LEROBOT_HOME='$REMOTE_LEROBOT_HOME' OPENPI_DATA_HOME='$REMOTE_OPENPI_DATA_HOME' UV_CACHE_DIR='$REMOTE_UV_CACHE_DIR' \
 XLA_PYTHON_CLIENT_MEM_FRACTION=$XLA_MEM \
 uv run --frozen python scripts/train.py $TRAIN_CONFIG --exp-name=$EXP_NAME --data.repo-id=$REPO_ID \
---num-train-steps=$NUM_TRAIN_STEPS --fsdp-devices=$FSDP_DEVICES $WEIGHT_LOADER_FLAG=$REMOTE_INIT $TRAIN_WANDB_FLAG --overwrite"
+--num-train-steps=$NUM_TRAIN_STEPS --fsdp-devices=$FSDP_DEVICES --weight-loader.params-path=$REMOTE_INIT $TRAIN_WANDB_FLAG --overwrite"
 
   # 5) Resolve the fresh EC2 checkpoint, rsync the run dir back to LOCAL, hand it forward.
   REMOTE_RUN_DIR="$REMOTE_CKPT_BASE/$TRAIN_CONFIG/$EXP_NAME"
@@ -283,14 +342,12 @@ uv run --frozen python scripts/train.py $TRAIN_CONFIG --exp-name=$EXP_NAME --dat
   REMOTE_INIT="$REMOTE_STEP_DIR/params"  # EC2 training init next round (stays resident on EC2)
 done
 
-# Final eval of the last policy (LOCAL), unless --no-eval.
-if ! $NO_EVAL; then
-  EVAL_DIR="$WORKDIR/eval_r${ROUNDS}"
-  EVAL_CMD=(env XLA_PYTHON_CLIENT_MEM_FRACTION="$XLA_MEM" uv run python scripts/eval_pi0_libero.py
-    --config-name "$EVAL_CONFIG" "env.env_name=$ENV_NAME" "env.task_ids=[$TASK_IDS_CSV]"
-    "eval.num_episodes=$EVAL_NUM_EPISODES" "pi0.checkpoint=$COLLECT_CKPT" "hydra.run.dir=$EVAL_DIR")
-  [[ -n "$COLLECT_CFG_NAME" ]] && EVAL_CMD+=("pi0.config_name=$COLLECT_CFG_NAME")
-  run_local "$REPO_ROOT" "${EVAL_CMD[@]}"
-fi
+# Final eval of the last policy (LOCAL).
+EVAL_DIR="$WORKDIR/eval_r${FINAL_EVAL_R}"
+EVAL_CMD=(env XLA_PYTHON_CLIENT_MEM_FRACTION="$XLA_MEM" uv run python scripts/eval_pi0_libero.py
+  --config-name "$EVAL_CONFIG" "env.env_name=$ENV_NAME" "env.task_ids=[$EVAL_TASK_IDS_CSV]"
+  "eval.num_episodes=$EVAL_NUM_EPISODES" "pi0.checkpoint=$COLLECT_CKPT" "hydra.run.dir=$EVAL_DIR")
+[[ -n "$COLLECT_CFG_NAME" ]] && EVAL_CMD+=("pi0.config_name=$COLLECT_CFG_NAME")
+run_local "$REPO_ROOT" "${EVAL_CMD[@]}"
 
 echo -e "\nHITL loop complete."

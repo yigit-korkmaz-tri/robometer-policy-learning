@@ -4,17 +4,18 @@
 Each round runs its steps as SEPARATE subprocesses (so JAX training and robosuite teleop never share
 a process), then hands the freshly fine-tuned checkpoint to the next round's data collection:
 
-  0. eval     (root env):    scripts/eval_pi0_libero.py   -> success rate on the task suite (skip with --no-eval)
+  0. eval     (root env):    scripts/eval_pi0_libero.py   -> success rate on the task suite (--skip-init-eval skips the first round's)
   1. collect  (root env):    scripts/collect_hitl_libero_pi0.py  -> per-task corrections HDF5 (one per task id)
   2. export   (openpi env):  scripts/export_hitl_to_lerobot.py   -> LeRobot repo (all rounds + base demos)
   3. normstats(openpi env):  third_party/dsrl_openpi/scripts/compute_norm_stats.py
   4. train    (openpi env):  third_party/dsrl_openpi/scripts/train.py pi05_libero_hitl_lora (LoRA HG-DAgger)
   -> resolve the new checkpoint step dir; round R+1 evals/collects with it (config_name=<train config>).
 
-Works over a SUITE: pass a list of task ids (--task-ids); each round evals on all of them, collects
-corrections for each, aggregates every task's corrections (plus optional base demos) into one LeRobot
-repo, and trains a single policy. Eval runs at the START of each round, so round 0 measures the base
-policy and later rounds measure the fine-tuned one -- a success-rate curve across rounds.
+Works over a SUITE (--env-name), with two task-id sets from it: --eval-task-ids are evaluated every round
+(fixed throughout), --collect-task-ids get corrections collected (default: the eval set). Every task's
+corrections (plus optional base demos) are aggregated into one LeRobot repo and a single policy is
+trained. Eval runs at the START of each round, so round 0 measures the base policy and later rounds
+measure the fine-tuned one -- a success-rate curve across rounds.
 
 This is deliberately thin: it shells out with explicit commands (use ``--dry-run`` to print them and
 tune before running). Prerequisites: (a) ``lerobot`` installed in the openpi env (this repo's openpi
@@ -22,18 +23,29 @@ copy pins it as a project dependency); (b) a display for the teleop collection s
 pi0.5 checkpoint.
 
 Round 0 collects with ``--base-pi0-checkpoint`` (default the LIBERO-tuned pi0.5) and trains initialized
-from ``--init-weights``. Aggregate anti-forgetting demos with ``--base-demos`` (folded into every
-round's LeRobot repo, since openpi trains a single repo). See [[dp-hgdagger-needs-aggregation]].
+from ``--init-weights``. Anti-forgetting demos are folded into every round's LeRobot repo (openpi trains
+a single repo): ``--libero-base-num-demos N`` (> 0) adds N LIBERO expert demos per task from the
+``--env-name`` suite, and ``--base-demos`` adds HDF5s in this repo's collection schema. See
+[[dp-hgdagger-needs-aggregation]]. LIBERO base demos default to every task collected so far (not the eval
+set, which may hold tasks deliberately never trained on).
+
+Growing collection curriculum: ``--collect-schedule "57;57 58;57 58 59"`` collects on task 57 in round 0,
+57+58 in round 1, 57+58+59 in round 2 (``;`` separates rounds; the last list repeats). Every scheduled id
+must be one of ``--collect-task-ids``. Default: all collect tasks in every round.
+
+Before every round after the first, the loop asks whether to continue; answering ``n`` skips straight
+to the final eval of the latest checkpoint. ``--no-round-prompt`` disables the question.
 
 Example:
-    uv run python scripts/hitl_pi0_loop.py --rounds 3 --env-name libero_90 --task-ids 57 58 59 \
+    uv run python scripts/hitl_pi0_loop.py --rounds 3 --env-name libero_90 \
+        --eval-task-ids 57 58 59 60 --collect-task-ids 57 58 59 --collect-schedule "57;57 58;57 58 59" \
         --collect-num-rollouts 5 --num-train-steps 3000 --eval-num-episodes 20 \
         --repo-id-prefix yourname/libero_hitl --exp-prefix hitl_t575859 \
-        --libero-base-suite libero_90 --libero-base-num-demos 10  --train-config pi05_libero_hitl_lora
+        --libero-base-num-demos 10 --train-config pi05_libero_hitl_lora
 
 LIBERO-plus robustness loop -- BASE tasks 3 and 7, every rollout and eval episode under a different
 camera perturbation (see docs/LIBERO_PLUS.md):
-    uv run python scripts/hitl_pi0_loop.py --rounds 3 --env-name libero_spatial --task-ids 3 7 \
+    uv run python scripts/hitl_pi0_loop.py --rounds 3 --env-name libero_spatial --eval-task-ids 3 7 \
         --perturbation camera --variant-seed 0 --collect-num-rollouts 5 --eval-num-episodes 20 \
         --repo-id-prefix yourname/libero_plus_hitl --exp-prefix hitl_plus_camera
 """
@@ -70,12 +82,66 @@ def _resolve_ckpt_step_dir(checkpoint_base_dir, config_name, exp_name):
     return max(steps, key=lambda d: int(os.path.basename(d)))
 
 
+def _build_schedule(collect_task_ids, spec):
+    """Per-round collection task lists from ``spec``, rounds separated by ``;``.
+
+    ``"57;57 58;57 58 59"`` -> [[57], [57, 58], [57, 58, 59]]; empty -> all ``collect_task_ids``, every round.
+    Every scheduled id must be one of ``collect_task_ids`` (catches typos).
+    """
+    if not spec:
+        return [list(collect_task_ids)]
+    schedule = []
+    for i, entry in enumerate(spec.split(";")):
+        tokens = entry.replace(",", " ").split()
+        if not tokens or not all(t.isdigit() for t in tokens):
+            raise ValueError(f"--collect-schedule round {i} ({entry.strip()!r}) must be space-separated task ids.")
+        ids = [int(t) for t in tokens]
+        unknown = [t for t in ids if t not in collect_task_ids]
+        if unknown:
+            raise ValueError(
+                f"--collect-schedule round {i} has task(s) {unknown}, "
+                f"not in --collect-task-ids {list(collect_task_ids)}."
+            )
+        schedule.append(ids)
+    return schedule
+
+
+def _collect_tasks(schedule, r):
+    """Collection task ids for round ``r``; the last schedule entry repeats past its end."""
+    return schedule[min(r, len(schedule) - 1)]
+
+
+def _tasks_collected_through(schedule, r):
+    """Every task id collected in rounds 0..r, first-seen order (what that round's training sees)."""
+    seen = []
+    for pr in range(r + 1):
+        seen += [t for t in _collect_tasks(schedule, pr) if t not in seen]
+    return seen
+
+
+def _confirm_next_round(r):
+    """Ask whether to run round ``r``. No terminal (EOF) means unattended -> keep going."""
+    try:
+        reply = input(f"\nRound {r - 1} finished. Continue to round {r}? [Y/n] ").strip().lower()
+    except EOFError:
+        return True
+    return reply not in ("n", "no")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--rounds", type=int, required=True)
-    ap.add_argument("--task-ids", type=int, nargs="+", required=True,
-                    help="Task ids (from --env-name) to run each round: corrections are collected for "
-                         "every task, aggregated into one LeRobot repo, and one policy is trained.")
+    ap.add_argument("--eval-task-ids", type=int, nargs="+", required=True,
+                    help="Task ids (from --env-name) evaluated at the start of every round and at the end; "
+                         "fixed throughout, so the success-rate curve is comparable across rounds.")
+    ap.add_argument("--collect-task-ids", type=int, nargs="+", default=None,
+                    help="Task ids (same suite) to collect corrections on. Default: --eval-task-ids.")
+    ap.add_argument("--collect-schedule", nargs="+", default=None,
+                    help="Explicit per-round collection lists, rounds separated by ';', e.g. "
+                         "'57;57 58;57 58 59' (the last list repeats). Ids must come from --collect-task-ids. "
+                         "Default: all collect tasks in every round.")
+    ap.add_argument("--no-round-prompt", action="store_true",
+                    help="Don't ask before each round whether to continue (run all --rounds unattended).")
     ap.add_argument("--env-name", default="libero_90", help="LIBERO suite for collection/eval.")
     # LIBERO-plus robustness benchmark (see docs/LIBERO_PLUS.md). Applies to BOTH the eval and collect
     # steps, so a round measures and corrects the same perturbed tasks. Task ids under --libero-plus
@@ -86,14 +152,14 @@ def main():
     ap.add_argument("--init-state-index", default=None,
                     help="env.init_state_index for collect/eval: int, 'cycle', 'random', 'null' or "
                          "'auto' (default; = 0 under --libero-plus, unset otherwise).")
-    # Per-episode perturbation sampling: --task-ids then means BASE task ids (0-9) and every rollout /
+    # Per-episode perturbation sampling: both task-id sets then mean BASE task ids (0-9) and every rollout /
     # eval episode runs a different variant of this family. The same --variant-seed is passed to both
     # steps of every round, so each round walks the same perturbation sequence and the across-round
     # success-rate curve is comparable.
     ap.add_argument("--perturbation", default=None,
                     help="LIBERO-plus perturbation family to sample variants from (background, camera, "
                          "language, light, layout, robot, noise, or 'all'). Implies --libero-plus; "
-                         "--task-ids become BASE task ids.")
+                         "--eval-task-ids / --collect-task-ids become BASE task ids.")
     ap.add_argument("--variant-seed", type=int, default=None,
                     help="Seed for the per-episode variant order. Default: a random seed drawn once and "
                          "held fixed across ALL rounds, so every round's eval walks the same "
@@ -109,7 +175,11 @@ def main():
     # Per-round evaluation of the current policy on the task suite (round 0 = base policy).
     ap.add_argument("--eval-config", default="libero_eval")
     ap.add_argument("--eval-num-episodes", type=int, default=20, help="Eval episodes per task.")
-    ap.add_argument("--no-eval", action="store_true", help="Skip the per-round eval step.")
+    ap.add_argument(
+        "--skip-init-eval",
+        action="store_true",
+        help="Skip the eval at the start of round --start-round; later rounds' and the final eval still run.",
+    )
     ap.add_argument("--repo-id-prefix", required=True, help="LeRobot repo id prefix; round R -> <prefix>_r{R}.")
     ap.add_argument("--exp-prefix", required=True, help="openpi exp_name prefix; round R -> <prefix>_r{R}.")
     ap.add_argument("--train-config", default="pi05_libero_hitl_lora")
@@ -124,17 +194,17 @@ def main():
     ap.add_argument("--init-weights", default="gs://openpi-assets/checkpoints/pi05_libero/params",
                     help="Round-0 training init params (weight loader).")
     ap.add_argument("--base-demos", nargs="*", default=[], help="Glob(s) for anti-forgetting demo HDF5s.")
-    # On-the-fly LIBERO expert base demos (anti-forgetting) folded into every round's LeRobot repo.
-    ap.add_argument("--libero-base-suite", default=None, help="LIBERO suite for on-the-fly base demos.")
+    # On-the-fly LIBERO expert base demos (anti-forgetting) folded into every round's LeRobot repo, taken
+    # from the same suite as collection/eval (--env-name).
+    ap.add_argument("--libero-base-num-demos", type=int, default=0,
+                    help="LIBERO expert demos per task (from the --env-name suite) added to every round's "
+                         "training data. 0 (default) = none.")
     ap.add_argument("--libero-base-task-ids", type=int, nargs="*", default=[],
-                    help="Task ids within --libero-base-suite for base demos (default: the eval --task-id).")
-    ap.add_argument("--libero-base-num-demos", type=int, default=0, help="Expert demos per task.")
+                    help="Task ids for those base demos (default: every task collected so far).")
     ap.add_argument("--workdir", default=os.path.join(REPO_ROOT, "outputs"))
     ap.add_argument("--openpi-dir", default=os.path.join(REPO_ROOT, "third_party", "dsrl_openpi"))
     ap.add_argument("--checkpoint-base-dir", default=None,
                     help="openpi checkpoint_base_dir (default <openpi-dir>/checkpoints).")
-    ap.add_argument("--weight-loader-flag", default="--weight-loader.params-path",
-                    help="tyro flag to override the training init params per round (adjust if tyro differs).")
     ap.add_argument("--xla-mem-fraction", type=float, default=0.9,
                     help="XLA_PYTHON_CLIENT_MEM_FRACTION for JAX/GPU steps (JAX defaults to 0.75; 0.9 uses "
                          "more GPU memory to avoid OOM). Set <=0 to leave JAX's default.")
@@ -146,6 +216,29 @@ def main():
     store_only_human = args.store_only_human
     if store_only_human is None:
         store_only_human = args.train_config == "pi05_libero_hitl_lora"
+    try:
+        schedule = _build_schedule(
+            args.collect_task_ids or args.eval_task_ids,
+            " ".join(args.collect_schedule) if args.collect_schedule else None,
+        )
+    except ValueError as e:
+        ap.error(str(e))
+    if len(schedule) > args.rounds:
+        print(f"WARNING: --collect-schedule has {len(schedule)} entries but --rounds={args.rounds}; "
+              f"the last {len(schedule) - args.rounds} are never used.")
+    if args.libero_base_num_demos < 0:
+        ap.error("--libero-base-num-demos must be >= 0.")
+    # Base demos come from plain LIBERO's demo files, indexed in plain-LIBERO task order. That matches the
+    # task ids except under --libero-plus WITHOUT --perturbation, where ids index LIBERO-plus's expanded
+    # suites (libero_90 aside, which is identical in both) -- the demos would belong to the wrong tasks.
+    if (args.libero_base_num_demos > 0 and args.libero_plus and not args.perturbation
+            and args.env_name != "libero_90"):
+        ap.error("--libero-base-num-demos needs plain-LIBERO task ids, but under --libero-plus without "
+                 f"--perturbation the {args.env_name} ids index LIBERO-plus variants. Use --perturbation "
+                 "(ids become base task ids) or --base-demos instead.")
+    print(f"Eval tasks (every round): {args.eval_task_ids}")
+    for r in range(args.start_round, args.rounds):
+        print(f"  round {r}: collect on {_collect_tasks(schedule, r)}")
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     ckpt_base = args.checkpoint_base_dir or os.path.join(args.openpi_dir, "checkpoints")
@@ -172,14 +265,14 @@ def main():
         collect_cfg_name = args.train_config
         init_weights = os.path.join(prev_step, "params")
         for pr in range(args.start_round):
-            for t in args.task_ids:
+            for t in _collect_tasks(schedule, pr):
                 p = os.path.join(workdir, f"round_{pr}_task_{t}_rollouts.hdf5")
                 if os.path.exists(p):
                     round_hdf5s.append(p)
         print(f"Resuming at round {args.start_round}: eval/collect + train-init from {prev_step}; "
               f"aggregating {len(round_hdf5s)} prior correction file(s).")
 
-    task_ids_str = "[" + ",".join(str(t) for t in args.task_ids) + "]"
+    eval_task_ids_str = "[" + ",".join(str(t) for t in args.eval_task_ids) + "]"
 
     # Shared LIBERO-plus overrides, appended to both the eval and collect commands each round.
     libero_overrides = []
@@ -205,20 +298,26 @@ def main():
         eval_overrides.append(f"env.variant_seed={variant_seed}")
         collect_overrides.append(f"env.variant_seed={collect_seed}")
 
+    final_eval_r = args.rounds  # index of the closing eval; earlier if the user stops between rounds
     for r in range(args.start_round, args.rounds):
+        if r > args.start_round and not args.no_round_prompt and not args.dry_run and not _confirm_next_round(r):
+            print(f"Stopping before round {r}; evaluating the round {r - 1} checkpoint.")
+            final_eval_r = r
+            break
         repo_id = f"{args.repo_id_prefix}_r{r}"
         exp_name = f"{args.exp_prefix}_r{r}"
-        print(f"\n========== HITL ROUND {r} ==========")
+        collect_task_ids = _collect_tasks(schedule, r)
+        print(f"\n========== HITL ROUND {r} (collect on {collect_task_ids}) ==========")
 
         # 0) Eval the current policy (round 0 = base) on the whole task suite, for a success-rate
         # curve across rounds. Root env; hydra.run.dir pins per-round eval_results.json.
-        if not args.no_eval:
+        if not (args.skip_init_eval and r == args.start_round):
             eval_dir = os.path.join(workdir, f"eval_r{r}")
             eval_cmd = [
                 "uv", "run", "python", "scripts/eval_pi0_libero.py",
                 "--config-name", args.eval_config,
                 f"env.env_name={args.env_name}",
-                f"env.task_ids={task_ids_str}",
+                f"env.task_ids={eval_task_ids_str}",
                 f"eval.num_episodes={args.eval_num_episodes}",
                 f"pi0.checkpoint={collect_ckpt}",
                 f"hydra.run.dir={eval_dir}",
@@ -228,9 +327,9 @@ def main():
                 eval_cmd.append(f"pi0.config_name={collect_cfg_name}")
             _run(eval_cmd, dry=args.dry_run, extra_env=jax_env)
 
-        # 1) Collect corrections for EVERY task in the suite (root env, hydra overrides). One HDF5 per
-        # (round, task); all rounds' HDF5s accumulate for aggregation in the export step.
-        for t in args.task_ids:
+        # 1) Collect corrections for every task scheduled this round (root env, hydra overrides). One HDF5
+        # per (round, task); all rounds' HDF5s accumulate for aggregation in the export step.
+        for t in collect_task_ids:
             round_hdf5 = os.path.join(workdir, f"round_{r}_task_{t}_rollouts.hdf5")
             round_hdf5s.append(round_hdf5)
             collect_cmd = [
@@ -254,7 +353,7 @@ def main():
         # path never reaches conversion. (In --dry-run the files aren't created, so keep them all for
         # the printed command.)
         export_inputs = round_hdf5s if args.dry_run else [p for p in round_hdf5s if os.path.exists(p)]
-        has_base = bool(args.base_demos or args.libero_base_suite)
+        has_base = bool(args.base_demos or args.libero_base_num_demos > 0)
         if not export_inputs and not has_base:
             print(f"Round {r}: no saved corrections and no base demos — skipping export/train.")
             continue
@@ -272,11 +371,13 @@ def main():
             export_cmd += ["--inputs", *export_inputs]
         if args.base_demos:
             export_cmd += ["--base-demos", *args.base_demos]
-        if args.libero_base_suite:
-            # Default the base-demo task ids to the tasks being collected/trained on.
-            lb_task_ids = args.libero_base_task_ids or args.task_ids
+        if args.libero_base_num_demos > 0:
+            # Expert demos from the same suite. Default the task ids to the tasks trained on so far -- not
+            # the eval set, which may contain tasks the curriculum hasn't reached (expert demos there would
+            # leak into training).
+            lb_task_ids = args.libero_base_task_ids or _tasks_collected_through(schedule, r)
             export_cmd += [
-                "--libero-base-suite", args.libero_base_suite,
+                "--libero-base-suite", args.env_name,
                 "--libero-base-task-ids", *[str(t) for t in lb_task_ids],
                 "--libero-base-num-demos", str(args.libero_base_num_demos),
             ]
@@ -296,7 +397,7 @@ def main():
             ["uv", "run", "--frozen", "python", "scripts/train.py", args.train_config,
              f"--exp-name={exp_name}", f"--data.repo-id={repo_id}",
              f"--num-train-steps={args.num_train_steps}",
-             f"{args.weight_loader_flag}={init_weights}", "--overwrite"],
+             f"--weight-loader.params-path={init_weights}", "--overwrite"],
             cwd=args.openpi_dir, dry=args.dry_run, extra_env=jax_env,
         )
 
@@ -310,23 +411,21 @@ def main():
         collect_cfg_name = args.train_config  # fine-tuned LoRA arch => explicit config for Pi0Wrapper
         init_weights = os.path.join(step_dir, "params")
 
-    # At the end of all rounds, eval the final policy one more time (unless --no-eval).
-    if not args.no_eval:
-        final_eval_r = args.rounds
-        eval_dir = os.path.join(workdir, f"eval_r{final_eval_r}")
-        eval_cmd = [
-            "uv", "run", "python", "scripts/eval_pi0_libero.py",
-            "--config-name", args.eval_config,
-            f"env.env_name={args.env_name}",
-            f"env.task_ids={task_ids_str}",
-            f"eval.num_episodes={args.eval_num_episodes}",
-            f"pi0.checkpoint={collect_ckpt}",
-            f"hydra.run.dir={eval_dir}",
-            *eval_overrides,
-        ]
-        if collect_cfg_name:
-            eval_cmd.append(f"pi0.config_name={collect_cfg_name}")
-        _run(eval_cmd, dry=args.dry_run, extra_env=jax_env)
+    # At the end of all rounds, eval the final policy one more time.
+    eval_dir = os.path.join(workdir, f"eval_r{final_eval_r}")
+    eval_cmd = [
+        "uv", "run", "python", "scripts/eval_pi0_libero.py",
+        "--config-name", args.eval_config,
+        f"env.env_name={args.env_name}",
+        f"env.task_ids={eval_task_ids_str}",
+        f"eval.num_episodes={args.eval_num_episodes}",
+        f"pi0.checkpoint={collect_ckpt}",
+        f"hydra.run.dir={eval_dir}",
+        *eval_overrides,
+    ]
+    if collect_cfg_name:
+        eval_cmd.append(f"pi0.config_name={collect_cfg_name}")
+    _run(eval_cmd, dry=args.dry_run, extra_env=jax_env)
 
     print("\nHITL loop complete.")
 

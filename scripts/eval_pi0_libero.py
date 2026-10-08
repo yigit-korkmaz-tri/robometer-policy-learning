@@ -467,6 +467,12 @@ def main(cfg: DictConfig):
     overall_sr = float(np.mean([r["success_rate"] for r in results])) if results else 0.0
     total_succ = int(np.sum([r["num_success"] for r in results]))
     total_eps = int(np.sum([r["num_episodes"] for r in results]))
+    # Completion time over the whole suite, pooled over episodes (micro): steps of all episodes and of the
+    # successful ones, i.e. how long the policy takes when it does solve a task.
+    all_eps = [e for r in results for e in r["episodes"]]
+    succ_steps = [e["steps"] for e in all_eps if e["success"]]
+    overall_steps = float(np.mean([e["steps"] for e in all_eps])) if all_eps else 0.0
+    overall_steps_succ = float(np.mean(succ_steps)) if succ_steps else 0.0
     logger.info("=" * 60)
     variants_col = perturbation is not None
     steps_col = len(set(max_steps_per_task)) > 1  # per-task budgets differ -> show them
@@ -487,8 +493,8 @@ def main(cfg: DictConfig):
         logger.info(row)
     logger.info("-" * 60)
     logger.info(
-        f"{'MEAN':>10} | {overall_sr:>7.1%} | {total_succ:>4}/{total_eps:<4} | "
-        f"(micro success {total_succ / max(total_eps, 1):.1%})"
+        f"{'MEAN':>10} | {overall_sr:>7.1%} | {total_succ:>4}/{total_eps:<4} | {overall_steps:>9.1f} | "
+        f"{overall_steps_succ:>10.1f} (micro success {total_succ / max(total_eps, 1):.1%}; steps pooled over episodes)"
     )
     logger.info("=" * 60)
 
@@ -553,6 +559,9 @@ def main(cfg: DictConfig):
         "per_task": results,
         "mean_success_rate": overall_sr,
         "micro_success_rate": total_succ / max(total_eps, 1),
+        # Completion time in steps, pooled over every episode of every task (per-task values in per_task).
+        "avg_steps": overall_steps,
+        "avg_steps_success": overall_steps_succ,
     }
     results_path = os.path.join(output_dir, "eval_results.json")
     with open(results_path, "w") as f:
@@ -561,7 +570,11 @@ def main(cfg: DictConfig):
 
     if wandb_logger is not None:
         wandb_logger.log(
-            {"mean_success_rate": overall_sr, "micro_success_rate": total_succ / max(total_eps, 1)},
+            {
+                "mean_success_rate": overall_sr,
+                "micro_success_rate": total_succ / max(total_eps, 1),
+                "avg_steps_success": overall_steps_succ,
+            },
             step=len(task_ids),
             prefix="eval",
         )

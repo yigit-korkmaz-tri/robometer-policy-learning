@@ -59,7 +59,7 @@ Run `scripts/check_state_alignment.py`, and convert with `scripts/convert_robomi
 Fine-tuning on human corrections alone (`hitl.store_only_human=true`, no offline anchor) destroys the
 pretrained behaviour. Always mix in demos: set `hitl.offline_mode` to `pretraining`, `warmup` or
 `self` (§4 of [WORKFLOWS.md](WORKFLOWS.md)). The same applies on the openpi side — fold base demos
-into every round's LeRobot repo (`--libero-base-suite` / `--base-demos` in `hitl_pi0_loop.py`),
+into every round's LeRobot repo (`--libero-base-num-demos` / `--base-demos` in `hitl_pi0_loop.py`),
 because openpi trains one repo per round.
 
 ### 7. Two image pipelines ("Mode A" vs "Mode B")

@@ -47,6 +47,10 @@ from robometer_policy_learning.buffers.h5_replay_buffer import H5ReplayBuffer
 from robometer_policy_learning.buffers.samplers import RandomSampler
 from robometer_policy_learning.envs.robosuite_wrappers import setup_robomimic_env
 from robometer_policy_learning.rollouts.evaluation_worker import EvaluationWorker
+from robometer_policy_learning.utils.numpy_compat import allow_numpy2_rng_pickles
+
+# Actors trained in the robometer (numpy 2) env pickle an RNG that numpy 1.26 can't rebuild.
+allow_numpy2_rng_pickles()
 
 # In human-control mode the sim is paused until the human issues a command; a command is a
 # non-trivial end-effector motion or a gripper-state change.

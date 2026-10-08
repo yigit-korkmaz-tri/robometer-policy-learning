@@ -31,6 +31,7 @@ from robometer_policy_learning.utils.hitl_utils import (
     TakeoverToggle,
     _find_robosuite_env,
     _success_from_info,
+    open_spacemouse,
 )
 
 # Intervention-label convention (matches the HITL buffers / MILE): 0 = autonomous policy, 1 = human.
@@ -154,9 +155,7 @@ class Pi0LiberoHitlWorker:
 
             self._device = Keyboard(pos_sensitivity=pos_sensitivity, rot_sensitivity=rot_sensitivity)
         elif self.teleop_device == "spacemouse":
-            from robosuite.devices import SpaceMouse
-
-            self._device = SpaceMouse(pos_sensitivity=pos_sensitivity, rot_sensitivity=rot_sensitivity)
+            self._device = open_spacemouse(pos_sensitivity=pos_sensitivity, rot_sensitivity=rot_sensitivity)
         else:
             raise ValueError(f"teleop_device must be 'keyboard' or 'spacemouse', got {teleop_device!r}.")
         self._input2action = input2action
@@ -256,6 +255,7 @@ class Pi0LiberoHitlWorker:
         precomputed here at collection time so training can read the stored pool instead of keeping a
         resident copy of the rollout policy and sampling it every step (see
         scripts/export_hitl_to_lerobot.py and third_party/dsrl_openpi/scripts/train.py _flow_mile_grads).
+        Called from :meth:`compute_rollout_pools` once collection has finished.
         """
         obs = {**stored_obs, "prompt": prompt}
         chunks = [self._pi0_chunk(obs) for _ in range(self.rollout_pool_size)]
@@ -263,6 +263,41 @@ class Pi0LiberoHitlWorker:
         if self._rollout_horizon is None:
             self._rollout_horizon = int(pool.shape[1])
         return pool
+
+    def compute_rollout_pools(self):
+        """Fill ``rollout_samples`` on every collected transition that lacks it (no-op if pool size is 0).
+
+        Deferred to the end of collection so pool sampling never stalls the operator between rollouts.
+        The pool depends only on the stored obs/prompt and the (fixed) collection policy, so the result
+        matches sampling it per episode. Needs only the pi0 wrapper -- safe after env / teleop are closed.
+        """
+        if self.rollout_pool_size <= 0 or not self.collected_episodes:
+            return
+        n_eps = len(self.collected_episodes)
+        n_human = sum(
+            1 for ep in self.collected_episodes for t in ep
+            if int(t["intervention"]) == INTERVENTION_LABEL and "rollout_samples" not in t
+        )
+        logger.info(
+            f"Sampling rollout pools for {n_human} human steps across {n_eps} episodes "
+            f"({self.rollout_pool_size} draws each)..."
+        )
+        for i, ep in enumerate(self.collected_episodes):
+            for t in ep:
+                if "rollout_samples" in t:
+                    continue
+                # Flow-MILE: the frozen-rollout baseline pool is only consumed for HUMAN (label-1)
+                # states, so sample it (env-space [P, H, action_dim]) only there; zero-fill every
+                # other frame to keep the per-demo array fixed-shape.
+                if int(t["intervention"]) == INTERVENTION_LABEL:
+                    t["rollout_samples"] = self._pi0_pool(t["obs"], t["prompt"])
+                else:
+                    horizon = self._resolve_rollout_horizon(t["obs"])
+                    t["rollout_samples"] = np.zeros(
+                        (self.rollout_pool_size, horizon, self.action_dim),
+                        dtype=np.float32,
+                    )
+            logger.info(f"  rollout pools: episode {i + 1}/{n_eps} done")
 
     def _resolve_rollout_horizon(self, obs) -> int:
         """Return the rollout action-chunk horizon, deriving it lazily when needed.
@@ -368,7 +403,9 @@ class Pi0LiberoHitlWorker:
         Transitions are buffered and, unless the episode is aborted ('q') or filtered out, appended
         to ``self.collected_episodes`` at episode end. ``require_success`` keeps only successful
         episodes; ``require_intervention`` keeps only episodes with >= 1 human step;
-        ``store_only_human`` stores only the human-correction transitions.
+        ``store_only_human`` stores only the human-correction transitions. With
+        ``rollout_pool_size > 0``, call :meth:`compute_rollout_pools` after collection to fill
+        ``rollout_samples``.
         """
         env = self.env
         dev, toggle = self._device, self.toggle
@@ -445,18 +482,8 @@ class Pi0LiberoHitlWorker:
                 prompt = _prompt_str(obs)
                 for t in pending:
                     t["prompt"] = prompt
-                    # Flow-MILE: the frozen-rollout baseline pool is only consumed for HUMAN (label-1)
-                    # states, so sample it (env-space [P, H, action_dim]) only there; zero-fill every
-                    # other frame to keep the per-demo array fixed-shape. Done once per kept episode.
-                    if self.rollout_pool_size > 0:
-                        if int(t["intervention"]) == INTERVENTION_LABEL:
-                            t["rollout_samples"] = self._pi0_pool(t["obs"], prompt)
-                        else:
-                            horizon = self._resolve_rollout_horizon(t["obs"])
-                            t["rollout_samples"] = np.zeros(
-                                (self.rollout_pool_size, horizon, self.action_dim),
-                                dtype=np.float32,
-                            )
+                # Flow-MILE rollout pools are NOT sampled here: that blocks the operator between
+                # rollouts. compute_rollout_pools() fills them once after collection.
                 self.collected_episodes.append(pending)
                 stored, kept = len(pending), True
 

@@ -181,7 +181,8 @@ def _write_h5(episodes, output_path, *, action_min, action_max, meta_extra, epis
             g.create_dataset("intervention", data=interv)
 
             # Flow-MILE: per-frame frozen-rollout baseline pool [N, P, H, action_dim] (env-space),
-            # precomputed from the collection policy. Present only when hitl.rollout_pool_size > 0.
+            # precomputed from the collection policy after collection (worker.compute_rollout_pools).
+            # Present only when hitl.rollout_pool_size > 0.
             if "rollout_samples" in trs[0]:
                 pool = np.stack([np.asarray(t["rollout_samples"], dtype=np.float32) for t in trs], axis=0)
                 g.create_dataset("rollout_samples", data=pool, compression="gzip")
@@ -402,6 +403,10 @@ def main(cfg: DictConfig):
             f"{output_path} (empty correction dataset)."
         )
         return
+
+    # Flow-MILE rollout pools, sampled once for all kept episodes (deferred from per-episode so the
+    # operator is not blocked between rollouts). Only pi0 is needed; env / teleop are already closed.
+    worker.compute_rollout_pools()
 
     meta_extra = {
         "created": datetime.now().isoformat(timespec="seconds"),
