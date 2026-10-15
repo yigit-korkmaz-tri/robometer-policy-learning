@@ -92,6 +92,10 @@ hitl:
 teleop:
   device: "spacemouse"               # keyboard | spacemouse
   takeover_key: "tab"
+  # Scale of keyboard / SpaceMouse deltas. 1.0 is robosuite's default; ~1.6 saturates a full
+  # SpaceMouse push at the OSC_POSE action clip (±1).
+  pos_sensitivity: 1.5             # translation
+  rot_sensitivity: 1.5             # rotation
   camera: "agentview"
   wrist_camera: "robot0_eye_in_hand"
   show_wrist: true

@@ -33,6 +33,16 @@ Usage:
         load_dir=/path/to/dp_run hitl.human_mode=simulated \
         hitl.expert_load_dir=/path/to/expert_run \
         hitl.collect_num_rollouts=50 hitl.collect_output_path=/path/to/hitl_rollouts.hdf5
+
+Controls (hitl.human_mode=real):
+  * Keyboard:   Tab = take/release control, wasd/rf + zx/tg/cv to move, space = gripper,
+                n = skip episode (discard), ESC = finish collection early (save & exit).
+  * SpaceMouse: Tab = take/release control, move/twist the puck to move,
+                left button = toggle gripper, n = skip episode (discard),
+                ESC = finish collection early (save & exit).
+  'n' works for either device, including while the policy is still driving. Taking over keeps a
+  closed gripper closed. Motion scale: ``teleop.pos_sensitivity`` / ``teleop.rot_sensitivity``
+  (default 1.0).
 """
 
 import os
@@ -418,6 +428,8 @@ def main(cfg: DictConfig):
         enable_render=enable_render,
         teleop_device=str(OmegaConf.select(cfg, "teleop.device", default="keyboard")),
         takeover_key=str(OmegaConf.select(cfg, "teleop.takeover_key", default="tab")),
+        pos_sensitivity=float(OmegaConf.select(cfg, "teleop.pos_sensitivity", default=1.0)),
+        rot_sensitivity=float(OmegaConf.select(cfg, "teleop.rot_sensitivity", default=1.0)),
         camera=OmegaConf.select(cfg, "teleop.camera", default="agentview"),
         wrist_camera=OmegaConf.select(cfg, "teleop.wrist_camera", default="robot0_eye_in_hand"),
         show_wrist=bool(OmegaConf.select(cfg, "teleop.show_wrist", default=True)),

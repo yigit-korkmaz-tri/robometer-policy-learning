@@ -76,9 +76,9 @@ for both devices.
 
 Controls:
   * Keyboard:   Tab = take/release control, wasd/rf + zx/tg/cv to move, space = gripper,
-                q = abort episode, ESC = quit.
-  * SpaceMouse: Tab = take/release control, move/twist the puck to move, left button = gripper,
-                right button = abort episode, ESC = quit.
+                n = skip episode, ESC = quit.
+  * SpaceMouse: Tab = take/release control, move/twist the puck to move, left button = toggle gripper,
+                n = skip episode, ESC = quit.
   * Toggle:     Tab = take/release control (expert drives while taken over), ESC = quit.
 """
 

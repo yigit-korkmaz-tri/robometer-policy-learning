@@ -29,6 +29,8 @@ from loguru import logger
 
 from robometer_policy_learning.utils.hitl_utils import (
     TakeoverToggle,
+    _SKIP_EPISODE_KEY,
+    _SkipEpisodeKey,
     _find_robosuite_env,
     _success_from_info,
     open_spacemouse,
@@ -74,8 +76,8 @@ class Pi0LiberoHitlWorker:
 
     Each kept episode is appended to ``self.collected_episodes`` as a list of per-step transition
     dicts (raw pi0 obs, executed env action, reward, done/truncated, intervention label, prompt),
-    ready to be written to an HDF5 dataset. Keyboard 'q' aborts (discards) the current episode; ESC
-    raises KeyboardInterrupt.
+    ready to be written to an HDF5 dataset. 'n' skips (discards) the current episode for both the
+    keyboard and the SpaceMouse, including while the policy is driving; ESC raises KeyboardInterrupt.
     """
 
     def __init__(
@@ -140,10 +142,12 @@ class Pi0LiberoHitlWorker:
         self.wrist_camera = wrist_camera
         self.show_wrist = bool(show_wrist) and wrist_camera != camera
         if self.teleop_device == "spacemouse":
-            controls = "move/twist puck: move, left btn: grip, right btn: reset"
+            controls = "move/twist puck: move, left btn: toggle grip"
         else:
-            controls = "wasd/rf+zx/tg/cv: move, space: grip, q: reset"
-        self.window = f"HITL pi0 ({takeover_key}: take/release, {controls}, ESC: quit)"
+            controls = "wasd/rf+zx/tg/cv: move, space: grip"
+        self.window = (
+            f"HITL pi0 ({takeover_key}: take/release, {controls}, {_SKIP_EPISODE_KEY}: skip episode, ESC: quit)"
+        )
         # NOTE: cv2 must be imported before torch (the caller does this), otherwise cv2's HighGUI
         # imshow/waitKey deadlocks against the pynput keyboard listener.
 
@@ -160,7 +164,15 @@ class Pi0LiberoHitlWorker:
             raise ValueError(f"teleop_device must be 'keyboard' or 'spacemouse', got {teleop_device!r}.")
         self._input2action = input2action
         self.toggle = TakeoverToggle(takeover_key)
-        logger.info(f"HITL teleop device: {self.teleop_device} (takeover key: '{takeover_key}')")
+        self._skip_key = _SkipEpisodeKey(_SKIP_EPISODE_KEY)
+        # SpaceMouse's left button is hold-to-close in robosuite. Latch it so one press closes and
+        # the next opens, and the gripper stays put when the button is released.
+        self._gripper_closed = False
+        self._gripper_button_down = False
+        logger.info(
+            f"HITL teleop device: {self.teleop_device} (takeover key: '{takeover_key}', "
+            f"skip episode: '{_SKIP_EPISODE_KEY}')"
+        )
 
     # -----------------------------------------------------------------------------------------
     def rebind_env(self, env):
@@ -186,6 +198,9 @@ class Pi0LiberoHitlWorker:
     def close(self):
         if self.toggle is not None:
             self.toggle.stop()
+        skip = getattr(self, "_skip_key", None)
+        if skip is not None:
+            skip.stop()
         dev = getattr(self, "_device", None)
         if dev is not None:
             # robosuite's SpaceMouse runs a daemon thread doing a blocking ``device.read(13)`` with no
@@ -225,6 +240,36 @@ class Pi0LiberoHitlWorker:
         if g is None:
             g = getattr(dev, "control_gripper", 0)
         return float(g)
+
+    def _sync_gripper_latch(self, obs):
+        """Match the SpaceMouse gripper toggle to the hand's current pose.
+
+        Panda finger open-stops are ±0.04 (``observation/state`` ends with those two qpos). Anything
+        inward of that — fully closed, or stopped on an object — counts as closed, so a takeover
+        keeps commanding close instead of prying the hand open. A button already held is not a click.
+        """
+        state = np.asarray(obs.get(PI0_STATE_KEY, []), dtype=np.float64).reshape(-1)
+        opening = float(np.abs(state[-2:]).mean()) if state.size >= 2 else 0.04
+        self._gripper_closed = opening < 0.03
+        self._gripper_button_down = float(getattr(self._device, "control_gripper", 0) or 0) > 0.5
+
+    def _latch_gripper(self, action):
+        """Turn the SpaceMouse left button into a toggle and write that into the gripper action.
+
+        Robosuite's device reports the button only while it is down (``control_gripper`` is 1 while
+        held, 0 otherwise), and ``input2action`` maps that straight onto the gripper command, so
+        releasing the button opens the gripper. A rising edge flips a latched open/closed state
+        instead; the command stays at that state until the next press. Returns ``(action, toggled)``.
+        """
+        held = float(getattr(self._device, "control_gripper", 0) or 0) > 0.5
+        toggled = held and not self._gripper_button_down
+        if toggled:
+            self._gripper_closed = not self._gripper_closed
+        self._gripper_button_down = held
+        action = np.asarray(action, dtype=np.float32).copy()
+        # Same sign convention as robosuite ``input2action``: +1 close, -1 open.
+        action[-1] = np.float32(1.0 if self._gripper_closed else -1.0)
+        return action, toggled
 
     def _fit_action(self, a):
         a = np.asarray(a, dtype=np.float32).reshape(-1)
@@ -314,26 +359,34 @@ class Pi0LiberoHitlWorker:
         """Block until the human issues a deliberate teleop command; return it (env-space) or None.
 
         Returns ``(action, aborted)``. ``action`` is None if the human released control without a
-        command (let the policy act this step). ``aborted`` is True if the human pressed reset ('q').
+        command (let the policy act this step). ``aborted`` is True if the human pressed 'n' (or the
+        device's own reset: keyboard 'q' / SpaceMouse right button).
         """
         dev, toggle = self._device, self.toggle
         last_grasp = self._device_grasp()
         action = None
-        while toggle.active and not dev._reset_state:
+        while toggle.active and not dev._reset_state and not self._skip_key.pressed:
             ha, _ = self._input2action(device=dev, robot=self.robot, active_arm="right", env_configuration=None)
             if ha is None:
                 break
             ha = self._fit_action(ha)
+            toggled = False
+            if self.teleop_device == "spacemouse":
+                ha, toggled = self._latch_gripper(ha)
             grasp = self._device_grasp()
-            # Gate on a deliberate move/grasp so an idle takeover does not freeze on a zero command.
-            if np.linalg.norm(ha[:-1]) > self.cmd_eps or grasp != last_grasp:
+            # Gate on a deliberate move or a gripper change so an idle takeover does not freeze on a
+            # zero command. For the SpaceMouse, only the toggle edge counts: releasing the button
+            # changes the raw hold signal but must not step the env.
+            moved = np.linalg.norm(ha[:-1]) > self.cmd_eps
+            gripper_changed = toggled if self.teleop_device == "spacemouse" else grasp != last_grasp
+            if moved or gripper_changed:
                 action = ha
                 break
             last_grasp = grasp
             if self._render("COLLECT", self._cur_tag, self._cur_step, "HUMAN  (waiting)", False, record=False) == 27:
                 raise KeyboardInterrupt
             time.sleep(0.01)
-        return action, bool(dev._reset_state)
+        return action, bool(dev._reset_state) or self._skip_key.consume()
 
     def _render(self, phase, ep_tag, step, mode, success, record=True):
         """Render the agent view(s) with a who's-in-control banner (and buffer frames when recording)."""
@@ -400,7 +453,7 @@ class Pi0LiberoHitlWorker:
                         require_success=False, require_intervention=False):
         """Run one HITL episode. Returns ``(steps, human_steps, stored, success)``.
 
-        Transitions are buffered and, unless the episode is aborted ('q') or filtered out, appended
+        Transitions are buffered and, unless the episode is skipped ('n') or filtered out, appended
         to ``self.collected_episodes`` at episode end. ``require_success`` keeps only successful
         episodes; ``require_intervention`` keeps only episodes with >= 1 human step;
         ``store_only_human`` stores only the human-correction transitions. With
@@ -414,6 +467,8 @@ class Pi0LiberoHitlWorker:
         obs = _extract0(env.reset()[0])
         dev.start_control()
         toggle.reset(active=False)
+        self._sync_gripper_latch(obs)
+        self._skip_key.pressed = False  # a press that ended the previous episode must not skip this one
         self._record_frames = [] if self.record_video else None
 
         chunk, chunk_pos = None, 0     # receding-horizon pi0 chunk state
@@ -423,10 +478,16 @@ class Pi0LiberoHitlWorker:
 
         while not done:
             self._cur_step = steps
+            # 'n' discards this episode immediately, including while the policy is still driving.
+            if self._skip_key.consume():
+                aborted = True
+                break
             if toggle.active:
                 # ---- Human takeover: per-step teleop, discard the pi0 chunk. ----
                 if not prev_human:
                     dev.start_control()
+                    # Keep a closed hand closed. Later presses still toggle from this pose.
+                    self._sync_gripper_latch(obs)
                 prev_human = True
                 chunk = None
                 action, aborted = self._teleop_action()

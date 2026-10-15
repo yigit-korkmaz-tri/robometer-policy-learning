@@ -40,9 +40,13 @@ To pin ONE specific variant instead, give its exact name and leave env.perturbat
 
 Controls:
   * Keyboard:   Tab = take/release control, wasd/rf + zx/tg/cv to move, space = gripper,
-                q = abort episode, ESC = finish collection early (save & exit).
-  * SpaceMouse: Tab = take/release control, move/twist the puck to move, left button = gripper,
-                right button = abort episode, ESC = finish collection early (save & exit).
+                n = skip episode (discard), ESC = finish collection early (save & exit).
+  * SpaceMouse: Tab = take/release control, move/twist the puck to move, left button = toggle gripper,
+                n = skip episode (discard), ESC = finish collection early (save & exit).
+
+Motion scale (keyboard and SpaceMouse): ``teleop.pos_sensitivity`` / ``teleop.rot_sensitivity``
+(default 1.0). Raise them to make the arm travel farther per input; ~1.6 saturates a full
+SpaceMouse deflection at the OSC action limit.
 """
 
 import os
@@ -313,6 +317,8 @@ def main(cfg: DictConfig):
         enable_render=bool(OmegaConf.select(cfg, "teleop.enable_render", default=True)),
         teleop_device=str(OmegaConf.select(cfg, "teleop.device", default="keyboard")),
         takeover_key=str(OmegaConf.select(cfg, "teleop.takeover_key", default="tab")),
+        pos_sensitivity=float(OmegaConf.select(cfg, "teleop.pos_sensitivity", default=1.0)),
+        rot_sensitivity=float(OmegaConf.select(cfg, "teleop.rot_sensitivity", default=1.0)),
         camera=OmegaConf.select(cfg, "teleop.camera", default="agentview"),
         wrist_camera=OmegaConf.select(cfg, "teleop.wrist_camera", default="robot0_eye_in_hand"),
         show_wrist=bool(OmegaConf.select(cfg, "teleop.show_wrist", default=True)),
