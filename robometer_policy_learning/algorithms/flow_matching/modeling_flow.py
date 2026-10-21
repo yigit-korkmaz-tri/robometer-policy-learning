@@ -20,6 +20,8 @@ replay buffer maps stored env-space actions into [-1, 1] and ``act()`` unnormali
 """
 
 import copy
+import json
+import os
 from dataclasses import dataclass
 from typing import Any, Optional, Tuple, Union
 
@@ -388,6 +390,19 @@ class FlowMatching(BaseAlgorithm):
             f"FlowMatching: num_inference_steps={config.num_inference_steps}, sigma_min={self.sigma_min}, "
             f"time_sampling={self.time_sampling}, use_ema={self.use_ema}, use_weighted_fm={self.use_weighted_fm}"
         )
+
+    def load(self, load_dir: str):
+        """Restore state without disconnecting AdamW or EMA from the active models."""
+        for name in ("actor", "online_actor") if self.use_ema else ("actor",):
+            saved_model = torch.load(os.path.join(load_dir, f"{name}.pt"), map_location=self.device, weights_only=False)
+            getattr(self, name).load_state_dict(saved_model.state_dict())
+            del saved_model
+        saved_optimizer = torch.load(
+            os.path.join(load_dir, "actor_optimizer.pt"), map_location=self.device, weights_only=False
+        )
+        self.actor_optimizer.load_state_dict(saved_optimizer.state_dict())
+        with open(os.path.join(load_dir, "training_state.json")) as f:
+            self.step_counter = json.load(f)["step"]
 
     def _prepare_actions(self, actions: torch.Tensor) -> torch.Tensor:
         """Coerce buffer actions into ``(B, horizon, action_dim)``."""

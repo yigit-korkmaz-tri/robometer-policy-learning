@@ -25,6 +25,8 @@ Usage:
         --input /path/to/image.hdf5 --output /path/to/image_aligned.hdf5
     # state including object pose (matches env use_full_state=True):
     uv run python scripts/convert_robomimic_to_aligned.py -i in.hdf5 -o out.hdf5 --include-object
+    # Dataset actions already contain absolute OSC poses:
+    uv run python scripts/convert_robomimic_to_aligned.py -i abs.hdf5 -o abs_aligned.hdf5 --include-object --absolute-actions
 """
 
 import argparse
@@ -171,6 +173,7 @@ def convert(
     include_object: bool = False,
     image_keys: List[str] = IMAGE_KEYS_DEFAULT,
     max_demos: int = None,
+    absolute_actions: bool = False,
 ):
     input_path = os.path.expanduser(input_path)
     output_path = os.path.expanduser(output_path)
@@ -197,12 +200,37 @@ def convert(
         if max_demos is not None:
             demos = demos[:max_demos]
 
+        if absolute_actions:
+            controller = env_meta["env_kwargs"]["controller_configs"]
+            if controller.get("type") != "OSC_POSE":
+                raise ValueError("--absolute-actions requires an OSC_POSE controller")
+            # Some absolute-action datasets retain the original delta-controller metadata.
+            # Correct the output only; pose commands also need bounds wider than [-1, 1]
+            # so policy action normalization does not clip their positions / axis angles.
+            pose_min = np.full(6, np.inf)
+            pose_max = np.full(6, -np.inf)
+            for demo in demos:
+                actions = np.asarray(fin["data"][demo]["actions"])
+                if actions.shape[1] != 7 or not np.isfinite(actions).all():
+                    raise ValueError("--absolute-actions requires finite 7-d OSC_POSE actions")
+                pose_min = np.minimum(pose_min, actions[:, :6].min(axis=0))
+                pose_max = np.maximum(pose_max, actions[:, :6].max(axis=0))
+            padding = np.maximum(0.05 * (pose_max - pose_min), 1e-3)
+            controller.update(
+                control_delta=False,
+                input_min=(pose_min - padding).tolist(),
+                input_max=(pose_max + padding).tolist(),
+            )
+            logger.info("Using absolute OSC_POSE metadata with dataset-derived action bounds")
+
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
         with h5py.File(output_path, "w") as fout:
             data_out = fout.create_group("data")
             # Preserve top-level data attrs (env_args, etc.) so the env can be reconstructed.
             for ak, av in fin["data"].attrs.items():
                 data_out.attrs[ak] = av
+            if absolute_actions:
+                data_out.attrs["env_args"] = json.dumps(env_meta)
 
             total = 0
             for di, demo in enumerate(demos):
@@ -266,6 +294,11 @@ def main():
         help="Camera image obs keys to copy through unchanged.",
     )
     p.add_argument("--max-demos", type=int, default=None, help="Convert only the first N demos (debug).")
+    p.add_argument(
+        "--absolute-actions",
+        action="store_true",
+        help="Actions already contain absolute OSC poses: correct output controller metadata and action bounds.",
+    )
     args = p.parse_args()
 
     convert(
@@ -274,6 +307,7 @@ def main():
         include_object=args.include_object,
         image_keys=args.image_keys,
         max_demos=args.max_demos,
+        absolute_actions=args.absolute_actions,
     )
 
 

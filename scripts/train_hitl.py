@@ -80,6 +80,9 @@ Controls:
   * SpaceMouse: Tab = take/release control, move/twist the puck to move, left button = toggle gripper,
                 n = skip episode, ESC = quit.
   * Toggle:     Tab = take/release control (expert drives while taken over), ESC = quit.
+  'n' works for either device, including while the policy is still driving. Taking over keeps a
+  closed gripper closed. Motion scale: ``teleop.pos_sensitivity`` / ``teleop.rot_sensitivity``
+  (default 1.0).
 """
 
 import os
@@ -708,6 +711,8 @@ def main(cfg: DictConfig):
             sim_execution_horizon=OmegaConf.select(cfg, "hitl.sim_execution_horizon", default=None),
             enable_render=enable_render,
             teleop_device=str(OmegaConf.select(cfg, "teleop.device", default="keyboard")),
+            pos_sensitivity=float(OmegaConf.select(cfg, "teleop.pos_sensitivity", default=1.0)),
+            rot_sensitivity=float(OmegaConf.select(cfg, "teleop.rot_sensitivity", default=1.0)),
             # Only open the teleop device (e.g. the single SpaceMouse) when a real human will actually
             # teleoperate online. Warmup/expert/simulated collection is autonomous, so a worker built
             # only for that must not grab the device (else concurrent/repeated runs collide on it).

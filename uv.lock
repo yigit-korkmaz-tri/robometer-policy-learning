@@ -20,6 +20,7 @@ overrides = [
     { name = "gymnasium", specifier = ">=1.2.2" },
     { name = "jax", extras = ["cuda12"], specifier = ">=0.5.3,<0.7.0" },
     { name = "protobuf", specifier = ">3.21" },
+    { name = "robosuite", specifier = "==1.4.1" },
     { name = "transformers", specifier = ">=4.57.0,<5" },
 ]
 
@@ -4795,7 +4796,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0.0" },
     { name = "rich", specifier = ">=14.0.0" },
     { name = "robomimic", specifier = "==0.2.0" },
-    { name = "robosuite", specifier = "==1.4.0" },
+    { name = "robosuite", specifier = "==1.4.1" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
     { name = "sentence-transformers", specifier = ">=2.0.0" },
     { name = "swig", marker = "extra == 'dev'", specifier = ">=4.0.0" },
@@ -4854,7 +4855,7 @@ sdist = { url = "https://files.pythonhosted.org/packages/3d/c3/44b1d1ea4bcb4bbed
 
 [[package]]
 name = "robosuite"
-version = "1.4.0"
+version = "1.4.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "mujoco" },
@@ -4864,11 +4865,13 @@ dependencies = [
     { name = "opencv-python", version = "4.11.0.86", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-25-robometer-policy-learning-openpi'" },
     { name = "opencv-python", version = "4.13.0.92", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-25-robometer-policy-learning-robometer' or extra != 'group-25-robometer-policy-learning-openpi'" },
     { name = "pillow" },
+    { name = "pynput" },
     { name = "scipy" },
+    { name = "termcolor" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/25/a1/9dd07a9a5e09c6aa032faf531da985808b34437cbf6c8f358fe8f7c47118/robosuite-1.4.0.tar.gz", hash = "sha256:a8a6233d7458dbd91bf00a86cab15aa1c178bd9d1b28d515db2cf3d152cb48e6", size = 192182147, upload-time = "2022-12-01T07:31:55.791Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/be/82/50fd8fa786e1bbd27d7de7ae9b8c6ca8a36df791c351bee20ef4cbf27687/robosuite-1.4.1.tar.gz", hash = "sha256:e209b0f7821bb84b2bf3763aeb64fa942ad9d58a1519eebfb39fbb68231ebb42", size = 192163039, upload-time = "2024-02-13T03:31:10.279Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2e/08/fe231064caaf2766d47818ca12fd8acf10dc4e762a33dabc6293e83bfead/robosuite-1.4.0-py3-none-any.whl", hash = "sha256:aba065e7b36745738cede259457b2cb349427f3608728d867ef3a2034cb62994", size = 193477875, upload-time = "2022-12-01T07:28:53.457Z" },
+    { url = "https://files.pythonhosted.org/packages/60/2f/bbcdf3130fc2c53c098d8699048724ac14292795dfb671168d1d5013fa03/robosuite-1.4.1-py3-none-any.whl", hash = "sha256:62587cd5888d9d3d813f3ffcc7017f6f77efa618952527a0b9bb139ffd0a3741", size = 193518002, upload-time = "2024-02-13T03:29:37.803Z" },
 ]
 
 [[package]]

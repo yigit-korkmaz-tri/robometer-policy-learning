@@ -35,7 +35,7 @@ training:
 # Logging configuration
 logging:
   wandb_project: mile_dp
-  wandb_entity: tri
+  wandb_entity: ykorkmaz
   wandb_offline: false
   wandb_log_dir_base: logs/wandb
   wandb_name: "train_flow"
@@ -48,7 +48,7 @@ alg:
 # Evaluation configuration
 eval:
   eval_freq: 5000   # Evaluation frequency in steps
-  eval_num_episodes: 20  # Number of episodes for evaluation
+  eval_num_episodes: 50  # Number of episodes for evaluation
   eval_record_video: true  # Whether to record videos during evaluation
   eval_on_first_step: true  # If true, evaluate on the first step before any training
 

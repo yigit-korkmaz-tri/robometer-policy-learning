@@ -364,6 +364,7 @@ def setup_robomimic_env(
     vectorization: str = "sync",
     async_context: str = "spawn",
     async_shared_memory: bool = True,
+    use_dataset_scene: bool = True,
 ) -> Tuple[gym.vector.VectorEnv, List[str]]:
     """
     Create a vectorized robosuite environment reconstructed from a robomimic dataset.
@@ -469,6 +470,10 @@ def setup_robomimic_env(
 
         def make_env(rank=i):
             base_env = suite.make(env_name, **deepcopy(env_kwargs))
+            if use_dataset_scene:
+                from robometer_policy_learning.utils.robomimic_scene import restore_dataset_scene
+
+                restore_dataset_scene(base_env, dataset_path)
             # Seed numpy for reproducible per-env task initialization.
             np.random.seed(seed + rank)
 
@@ -535,6 +540,7 @@ def setup_robomimic_env(
         f"(image_size={image_size}, image_obs_key='{image_obs_key}', "
         f"state='robot0_proprio-state'{' + object-state' if use_full_state else ''})"
     )
+    env.dataset_scene_restored = use_dataset_scene
 
     remove_obs_keys = [wrist_obs_key, "language", "prompt"] + extra_keys_to_drop
     if dinov2_model is not None:

@@ -34,7 +34,7 @@ training:
 # Logging configuration
 logging:
   wandb_project: mile_dp
-  wandb_entity: tri
+  wandb_entity: ykorkmaz
   wandb_offline: false
   wandb_log_dir_base: logs/wandb
   wandb_name: "train_flow"

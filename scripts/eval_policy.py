@@ -37,6 +37,7 @@ if "MUJOCO_GL" not in os.environ:
 import cv2  # noqa: F401  (import order matters; keep above torch)
 
 import argparse
+import json
 
 import numpy as np
 import torch
@@ -130,6 +131,11 @@ def parse_args():
     parser.add_argument("--checkpoint", default=None, help="Checkpoint <step> to load (e.g. 50000 or latest). Default: latest.")
     parser.add_argument("--num-episodes", type=int, default=10, help="Number of evaluation episodes.")
     parser.add_argument("--seed", type=int, default=None, help="Env seed (default: None = random).")
+    parser.add_argument("--output-json", default=None, help="Write numeric evaluation metrics to this JSON file.")
+    parser.add_argument("--dataset-scene", dest="dataset_scene", action="store_true", default=True,
+                        help="Restore the dataset's recorded scene XML (default).")
+    parser.add_argument("--native-scene", dest="dataset_scene", action="store_false",
+                        help="Use the installed simulator's native scene instead of the dataset scene.")
     parser.add_argument("--dataset-path", default=None, help="Override the H5 dataset path used to build the env.")
     parser.add_argument("--record-video", action="store_true", help="Record one episode to evaluation_videos/ (no wandb).")
     parser.add_argument("--n-action-steps", type=int, default=None, help="Number of action steps to execute (default: None = use training.n_action_steps).")
@@ -142,6 +148,9 @@ def parse_args():
 
 def main():
     args = parse_args()
+    if args.seed is not None:
+        np.random.seed(args.seed)
+        torch.manual_seed(args.seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # ---- Adopt env / training / model / policy from the run's saved Hydra config so the env build,
@@ -233,6 +242,7 @@ def main():
         sentence_model=sentence_model,
         image_keys=dino_image_keys,
         vectorization=args.vectorization,
+        use_dataset_scene=args.dataset_scene,
     )
 
     # ---- Low-dim obs normalization stats: the EvaluationWorker z-scores obs before act(), so when
@@ -295,6 +305,16 @@ def main():
             print(f"  {key:>20}: {float(value):.4f}")
         else:
             print(f"  {key:>20}: {value}")
+
+    if args.output_json:
+        numeric_metrics = {
+            k: v.item() if isinstance(v, np.generic) else v
+            for k, v in metrics.items() if isinstance(v, (int, float, np.number))
+        }
+        with open(args.output_json, "w") as f:
+            json.dump({"checkpoint": actor_path, "seed": args.seed, "dataset_scene": args.dataset_scene,
+                       **numeric_metrics}, f, indent=2)
+            f.write("\n")
 
 
 if __name__ == "__main__":

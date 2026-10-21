@@ -27,8 +27,6 @@ from robometer_policy_learning.buffers.h5_replay_buffer import H5ReplayBuffer
 # / eval server is configured, so they are imported lazily in those branches below -- that keeps this
 # module importable in a pi0/LIBERO environment installed without the robometer extra.
 from robometer_policy_learning.buffers.success_failure_replay_buffer import SuccessFailureReplayBuffer
-from robometer_policy_learning.buffers.remote_reward_relabel_buffer import AsyncRewardRelabelBuffer
-from robometer_policy_learning.distributed.clients.reward_relabel_client import RewardRelabelClient
 
 # Setup imports
 from transformers import AutoModel, AutoImageProcessor
@@ -563,6 +561,10 @@ def create_buffer(
     """
     # Handle distributed reward relabeling
     if use_async_reward_relabel:
+        # Supervised training does not need the reward server's generated protobufs.
+        from robometer_policy_learning.buffers.remote_reward_relabel_buffer import AsyncRewardRelabelBuffer
+        from robometer_policy_learning.distributed.clients.reward_relabel_client import RewardRelabelClient
+
         if reward_relabel_address is None:
             raise ValueError("reward_relabel_address is required when use_async_reward_relabel=True")
         if h5_paths is not None:

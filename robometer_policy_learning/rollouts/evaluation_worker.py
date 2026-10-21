@@ -159,6 +159,7 @@ class EvaluationWorker:
             "avg_steps": avg_steps,
             "success_rate": success_rate,
             "num_eval_episodes": num_episodes,
+            "dataset_scene": bool(getattr(self.eval_env, "dataset_scene_restored", False)),
         }
 
         logger.info(f"Evaluation over {num_episodes} episodes:")
@@ -563,6 +564,7 @@ class BatchEvaluationWorker(EvaluationWorker):
             "avg_steps": float(np.mean(steps)) if steps else 0.0,
             "success_rate": float(np.mean(success)) if success else 0.0,
             "num_eval_episodes": len(success),
+            "dataset_scene": bool(getattr(self.eval_env, "dataset_scene_restored", False)),
         }
         logger.info(f"Batched evaluation over {len(success)} episodes ({K} envs, quota {base}-{base+1}):")
         logger.info(f"  Average Reward: {eval_metrics['avg_reward']:.3f} ± {eval_metrics['std_reward']:.3f}")

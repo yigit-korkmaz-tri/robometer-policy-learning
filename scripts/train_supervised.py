@@ -10,6 +10,8 @@ if "MUJOCO_GL" not in os.environ:
     os.environ["MUJOCO_GL"] = "egl"
 
 import copy
+import json
+import random
 
 import numpy as np
 import torch
@@ -92,6 +94,13 @@ def main(cfg: DictConfig):
     """Main training function."""
 
     OmegaConf.resolve(cfg)
+
+    # Seed model initialization, flow noise, dropout, and replay sampling as well as the env.
+    random.seed(cfg.training.seed)
+    np.random.seed(cfg.training.seed)
+    torch.manual_seed(cfg.training.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(cfg.training.seed)
 
     # Setup all training components
     components = setup_training(cfg)
@@ -338,7 +347,7 @@ def main(cfg: DictConfig):
                 eval_env=eval_env,
                 device=device,
                 num_episodes=cfg.eval.eval_num_episodes,
-                record_video=True,
+                record_video=cfg.eval.eval_record_video,
                 logger=wandb_logger,
                 lowdim_obs_stats=getattr(offline_buffer, "lowdim_obs_stats", {}),
             )
@@ -353,6 +362,12 @@ def main(cfg: DictConfig):
 
         def _maybe_save_best(metrics):
             nonlocal best_success_rate
+            with open(os.path.join(save_dir, "..", "eval_metrics.jsonl"), "a") as f:
+                json.dump({"step": offline_algo.step_counter, **{
+                    k: v.item() if isinstance(v, np.generic) else v
+                    for k, v in metrics.items() if isinstance(v, (int, float, np.number))
+                }}, f)
+                f.write("\n")
             sr = metrics.get("success_rate") if metrics else None
             if sr is not None and float(sr) > best_success_rate:
                 best_success_rate = float(sr)
@@ -364,7 +379,7 @@ def main(cfg: DictConfig):
             wandb_logger.log(offline_eval_metrics, step=offline_algo.step_counter, prefix="eval")
         # Training loop
         logger.info(f"Training offline algorithm for {cfg.training.num_offline_steps} steps")
-        with tqdm(total=cfg.training.num_offline_steps, desc="Offline Training", unit="step") as pbar:
+        with tqdm(total=cfg.training.num_offline_steps, initial=start_step, desc="Offline Training", unit="step") as pbar:
             for i in range(start_step, cfg.training.num_offline_steps):
                 metrics = offline_algo.train_step(logging_prefix="train")
                 formatted_metrics = {k: f"{v:3.3f}" if isinstance(v, float) else v for k, v in metrics.items()}
