@@ -11,8 +11,19 @@ iteration:
         * True  (HG-DAgger) -> store ONLY the human corrections (label 1);
   2. trains the configured algorithm for ``hitl.train_steps_per_iter`` gradient steps over the
      training buffer (online, optionally mixed with offline demos labelled intervention=2 via
-     MixedReplayBuffer);
+     MixedReplayBuffer); with ``hitl.use_epochs=true`` it is a number of epochs instead, one epoch
+     being ceil(len(training buffer) / batch_size) steps, so the step count tracks the growing data;
 then repeats.
+
+``hitl.recent_round_ratio`` sets the fraction of each ONLINE batch drawn from the current (newest)
+iteration's rollouts, the rest uniformly from all earlier iterations (0.5 => the newest iteration
+weighs as much as everything before it). null => uniform over the whole online buffer, under which the
+newest iteration's share shrinks to ~1/num_iterations. Offline anchors are mixed in separately, by
+``hitl.offline_sample_ratio``.
+
+``hitl.epoch_sampling=true`` makes every buffer hand out its samples (or chunks) in shuffled passes,
+each exactly once per pass, instead of independent random draws. A pass restarts whenever a buffer
+grows, i.e. after each collection phase.
 
 ``hitl.offline_mode`` selects the offline-demo source mixed in for anti-forgetting aggregation:
   * null          -> no offline data (train on the online buffer only);
@@ -114,6 +125,7 @@ from robometer_policy_learning.algorithms.mile import MILEConfig
 from robometer_policy_learning.buffers.h5_replay_buffer import H5ReplayBuffer
 from robometer_policy_learning.buffers.mixed_replay_buffer import MixedReplayBuffer
 from robometer_policy_learning.buffers.replay_buffer import ReplayBuffer
+from robometer_policy_learning.buffers.round_replay_buffer import RoundReplayBuffer
 from robometer_policy_learning.buffers.samplers import ChunkedSequentialSampler, RandomSampler
 from robometer_policy_learning.envs.robosuite_wrappers import setup_robomimic_env
 from robometer_policy_learning.loggers.wandb_logger import WandbLogger
@@ -489,6 +501,9 @@ def main(cfg: DictConfig):
         gamma = OmegaConf.select(cfg, "offline_algorithm.gamma", default=0.99)
         sampler = ChunkedSequentialSampler(chunk_size=int(chunk_size), obs_as_sequence=False, gamma=gamma)
 
+    # true => every buffer visits each sample (or chunk) once per shuffled pass instead of i.i.d. draws.
+    epoch_sampling = bool(OmegaConf.select(cfg, "hitl.epoch_sampling", default=False))
+
     # ---- Offline H5 buffer ----
     lowdim_stats = {}
     offline_buffer = None
@@ -502,6 +517,7 @@ def main(cfg: DictConfig):
             max_action=action_max,
             normalize_lowdim_obs=normalize_lowdim,
             default_intervention_label=LABEL_OFFLINE,  # offline samples (MILE: action loss only)
+            epoch_sampling=epoch_sampling,
         )
         lowdim_stats = offline_buffer.lowdim_obs_stats
         if normalize_lowdim:
@@ -509,12 +525,16 @@ def main(cfg: DictConfig):
         if offline_mode != "pretraining":
             offline_buffer = None  # only needed for stats
 
-    online_buffer = ReplayBuffer(
+    # Tracks each transition's collection iteration so hitl.recent_round_ratio can oversample the newest.
+    recent_round_ratio = OmegaConf.select(cfg, "hitl.recent_round_ratio", default=None)
+    online_buffer = RoundReplayBuffer(
         capacity=int(OmegaConf.select(cfg, "hitl.online_buffer_capacity", default=200000)),
         remove_obs_keys=list(remove_obs_keys),
         sampler=sampler,
         min_action=action_min,
         max_action=action_max,
+        recent_ratio=None if recent_round_ratio is None else float(recent_round_ratio),
+        epoch_sampling=epoch_sampling,
     )
 
     # ---- Warmup buffer ----
@@ -531,6 +551,7 @@ def main(cfg: DictConfig):
             sampler=sampler,
             min_action=action_min,
             max_action=action_max,
+            epoch_sampling=epoch_sampling,
         )
         wstats = load_precollected_hitl(
             warmup_dataset_path, warmup_buffer, lowdim_stats, remove_obs_keys,
@@ -558,6 +579,7 @@ def main(cfg: DictConfig):
             sampler=sampler,
             min_action=action_min,
             max_action=action_max,
+            epoch_sampling=epoch_sampling,
         )
         logger.info(
             f"offline_mode='self': collecting {self_num_rollouts} successful autonomous rollouts from "
@@ -668,7 +690,10 @@ def main(cfg: DictConfig):
     algo_config.logger = wandb_logger
     algo = algo_config.create()
     needs_rollout_policy = hasattr(algo, "set_rollout_policy")  # e.g. MILE
-    logger.info(f"HITL algorithm: {alg_name} | store_only_human={store_only_human} | offline_mode={offline_mode}")
+    logger.info(
+        f"HITL algorithm: {alg_name} | store_only_human={store_only_human} | offline_mode={offline_mode} | "
+        f"recent_round_ratio={recent_round_ratio} | epoch_sampling={epoch_sampling}"
+    )
 
     reweighting = OmegaConf.select(cfg, "hitl.reweighting", default=None)
     # Reweighting (SIRIUS / IWR) per-sample weights are only consumed by a cloning algo with weighting
@@ -775,6 +800,8 @@ def main(cfg: DictConfig):
     # =====================================================================================
     rollouts_per_iter = int(OmegaConf.select(cfg, "hitl.rollouts_per_iter", default=5))
     train_steps_per_iter = int(OmegaConf.select(cfg, "hitl.train_steps_per_iter", default=1000))
+    # true => train_steps_per_iter counts epochs over the current training buffer, not gradient steps.
+    use_epochs = bool(OmegaConf.select(cfg, "hitl.use_epochs", default=False))
     clear_each_iter = bool(OmegaConf.select(cfg, "hitl.clear_buffer_each_iter", default=False))
     save_interval = int(OmegaConf.select(cfg, "hitl.save_interval", default=1))
 
@@ -845,6 +872,8 @@ def main(cfg: DictConfig):
             # and do not collect online.
             if clear_each_iter and not precollected_hitl_dataset:
                 online_buffer.clear()
+            if not precollected_hitl_dataset:
+                online_buffer.start_round(it)  # this iteration's rollouts are the "recent" round
 
             # --- 1) Collect rollouts until rollouts_per_iter SUCCESSFUL trajectories are stored.
             if not precollected_hitl_dataset:
@@ -867,14 +896,16 @@ def main(cfg: DictConfig):
                     logger.info(
                         f"  kept {num_kept}/{rollouts_per_iter} rollouts "
                         f"(attempt {attempt}, success={bool(success)}, stored={stored}, "
-                        f"successful attempt rate: {num_success / attempt:.2f})"
+                        f"steps={steps}, successful attempt rate: {num_success / attempt:.2f})"
                     )
+               
                 wandb_logger.log(
                     {
                         "mean_episode_len": float(np.mean(lengths)) if lengths else 0.0,
                         "intervention_fraction": float(np.mean(human_frac)) if human_frac else 0.0,
                         "transitions_stored": stored_total,
                         "online_buffer_size": len(online_buffer),
+                        "online_buffer_recent_size": online_buffer.recent_size(),
                         "iteration": it + 1,
                         "successful_attempt_rate": num_success / attempt,
                     },
@@ -929,13 +960,15 @@ def main(cfg: DictConfig):
             buffer_size = len(train_buffer)
             batch_size = int(OmegaConf.select(cfg, "offline_algorithm.batch_size", default=256))
             steps_per_epoch = max(1, -(-buffer_size // batch_size))  # ceil(buffer_size / batch_size)
-            eval_freq_steps = OmegaConf.select(cfg, "eval.eval_freq", default=train_steps_per_iter)
+            num_train_steps = train_steps_per_iter * steps_per_epoch if use_epochs else train_steps_per_iter
+            eval_freq_steps = OmegaConf.select(cfg, "eval.eval_freq", default=num_train_steps)
             logger.info(
-                f"Training {train_steps_per_iter} steps this iteration; "
-                f"eval every {eval_freq_steps} steps. "
+                f"Training {num_train_steps} steps this iteration"
+                + (f" ({train_steps_per_iter} epochs)" if use_epochs else "")
+                + f"; eval every {eval_freq_steps} steps. "
                 f"1 epoch is {steps_per_epoch} steps with the current dataset "
             )
-            for i in tqdm(range(train_steps_per_iter), desc="Training", unit="step"):
+            for i in tqdm(range(num_train_steps), desc="Training", unit="step"):
                 algo.train_step(logging_prefix="train")  # logs internally at algo.step_counter
                 # --- 3) Autonomous (no-human) evaluation ---
                 if (i + 1) % eval_freq_steps == 0:

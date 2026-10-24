@@ -37,8 +37,19 @@ hitl:
   num_iterations: 10              # must be 1 when precollected_hitl_dataset is set
   rollouts_per_iter: 5            # intervention rollouts collected each iteration (online mode only)
   train_steps_per_iter: 1000  # fixed number of gradient steps over the training buffer each iteration
+  # true => train_steps_per_iter is a number of EPOCHS instead: each iteration trains
+  # train_steps_per_iter * ceil(len(training buffer) / batch_size) steps, so it grows with the data.
+  # eval.eval_freq stays in steps. Pair with epoch_sampling=true to make each epoch an exact pass.
+  use_epochs: false
   online_buffer_capacity: 500000
   clear_buffer_each_iter: false   # false = accumulate online data across iterations
+  # Fraction of each ONLINE batch drawn from the newest iteration's rollouts; the rest comes uniformly
+  # from all earlier iterations (0.5 => newest weighs as much as all previous combined). null =>
+  # uniform over the online buffer. Until a second iteration exists, every online sample is "newest".
+  recent_round_ratio: 0.5
+  # true => each buffer hands out every sample (or chunk) once per shuffled pass (epochs) instead of
+  # independent random draws; a pass restarts when the buffer grows (after each collection phase).
+  epoch_sampling: true
   save_interval: 1                # save a checkpoint every N HITL iterations
   store_only_human: false         # false = store all steps (MILE); true = store only corrections (HG-DAgger)
   # [MILE] split each trajectory into contiguous same-label segments (separate episodes) so chunked
@@ -61,7 +72,7 @@ hitl:
   warmup_dataset_path: null
   # [self] number of SUCCESSFUL autonomous rollouts to collect from the initial policy.
   self_num_rollouts: 10
-  offline_sample_ratio: 0.5   # fraction of each batch from the offline buffer; null = live size ratio
+  offline_sample_ratio: null   # fraction of each batch from the offline buffer; null = live size ratio
   # Intervention source.
   #   real      => human teleoperates (keyboard/spacemouse) during takeover
   #   simulated => expert policy + intervention criterion decide takeover automatically (headless)

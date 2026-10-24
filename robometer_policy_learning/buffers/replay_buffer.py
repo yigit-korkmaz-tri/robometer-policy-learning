@@ -3,6 +3,7 @@ import numpy as np
 from typing import List, Tuple, Dict, Any, Union, Callable
 
 from robometer_policy_learning.buffers.base_replay_buffer import BaseReplayBuffer, Transition
+from robometer_policy_learning.buffers.samplers import EpochOrder
 
 
 class ReplayBuffer(BaseReplayBuffer):
@@ -22,6 +23,7 @@ class ReplayBuffer(BaseReplayBuffer):
         sampler=None,
         min_action=None,
         max_action=None,
+        epoch_sampling: bool = False,
     ):
         super().__init__(
             obs_keys=obs_keys,
@@ -39,6 +41,10 @@ class ReplayBuffer(BaseReplayBuffer):
         self._write_pos = 0
         self._transition_index: Dict[Tuple[Any, int], int] = {}
         self._episode_steps: Dict[Any, Dict[int, int]] = {}
+        # epoch_sampling: hand out transitions (or chunk starts) in shuffled passes, each exactly once
+        # per pass, instead of i.i.d. random draws. One EpochOrder per sampling pool.
+        self.epoch_sampling = bool(epoch_sampling)
+        self._epoch_orders: Dict[Any, EpochOrder] = {}
 
     def _add(
         self,
@@ -89,8 +95,31 @@ class ReplayBuffer(BaseReplayBuffer):
         self._write_pos = (self._write_pos + 1) % self.capacity
         self._size = min(self._size + 1, self.capacity)
 
+    def _epoch_key(self):
+        """Identity of the stored contents; a change starts a new epoch pass (see EpochOrder)."""
+        return (self._size, self._write_pos)
+
+    def _epoch_draw(self, pool, build_items, k: int, extra_key=None) -> list:
+        order = self._epoch_orders.setdefault(pool, EpochOrder())
+        return order.draw((self._epoch_key(), extra_key), build_items, k)
+
+    def _chunk_spans(self, episodes, chunk_size: int) -> List[Tuple[int, ...]]:
+        """Buffer positions of every valid (step-contiguous) chunk in ``episodes``."""
+        spans = []
+        for _, steps in episodes:
+            if len(steps) < chunk_size:
+                continue
+            sorted_steps = sorted(steps.items())
+            for start in range(len(sorted_steps) - chunk_size + 1):
+                window = sorted_steps[start : start + chunk_size]
+                if window[-1][0] - window[0][0] == chunk_size - 1:  # steps are unique, so this means contiguous
+                    spans.append(tuple(pos for _, pos in window))
+        return spans
+
     def sample_indices(self, batch_size: int, sampler=None) -> List[int]:
         """Return random buffer-position indices for O(batch_size) sampling."""
+        if self.epoch_sampling:
+            return self._epoch_draw("all", lambda: range(self._size), batch_size)
         if self._size < batch_size:
             return random.choices(range(self._size), k=batch_size)
         return random.sample(range(self._size), batch_size)
@@ -153,6 +182,7 @@ class ReplayBuffer(BaseReplayBuffer):
         self._write_pos = 0
         self._transition_index.clear()
         self._episode_steps.clear()
+        self._epoch_orders.clear()  # a refill can reproduce the old (size, write_pos) epoch key
 
     def get_contiguous_chunks(self, chunk_size: int, max_chunks: int):
         """Return contiguous chunks that correctly handle interleaved episodes.
@@ -163,12 +193,23 @@ class ReplayBuffer(BaseReplayBuffer):
         """
         if self._size == 0 or chunk_size <= 0 or max_chunks <= 0:
             return []
+        return self._chunks_from_episodes(self._episode_steps.items(), chunk_size, max_chunks)
 
-        eligible = [
-            (ep_id, steps)
-            for ep_id, steps in self._episode_steps.items()
-            if len(steps) >= chunk_size
-        ]
+    def _chunks_from_episodes(self, episodes, chunk_size: int, max_chunks: int, pool: str = "all"):
+        """Sample up to ``max_chunks`` contiguous chunks from ``episodes`` (``(ep_id, {step: pos})`` pairs).
+
+        Episodes are drawn proportionally to their number of valid chunk starts. With epoch_sampling,
+        every valid chunk of ``episodes`` is instead visited once per pass (``pool`` names the pass).
+        """
+        if chunk_size <= 0 or max_chunks <= 0:
+            return []
+        if self.epoch_sampling:
+            episodes = list(episodes)
+            spans = self._epoch_draw(
+                f"{pool}/chunks", lambda: self._chunk_spans(episodes, chunk_size), max_chunks, extra_key=chunk_size
+            )
+            return [[self.buffer[pos] for pos in span] for span in spans]
+        eligible = [(ep_id, steps) for ep_id, steps in episodes if len(steps) >= chunk_size]
         if not eligible:
             return []
 

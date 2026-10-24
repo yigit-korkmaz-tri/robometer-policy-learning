@@ -19,7 +19,7 @@ from robometer_policy_learning.buffers.base_replay_buffer import (
     batch_transitions,
     unbatch_transitions,
 )
-from robometer_policy_learning.buffers.samplers import BaseSampler
+from robometer_policy_learning.buffers.samplers import BaseSampler, EpochOrder
 
 
 class H5ReplayBuffer(BaseReplayBuffer):
@@ -65,6 +65,7 @@ class H5ReplayBuffer(BaseReplayBuffer):
         pre_convert_to_tensors: bool = True,
         optimize_tensor_dtype: bool = True,
         default_intervention_label: Optional[int] = None,
+        epoch_sampling: bool = False,
     ):
         super().__init__(
             obs_keys=obs_keys,
@@ -92,6 +93,9 @@ class H5ReplayBuffer(BaseReplayBuffer):
         # offline-dataset samples (e.g. label 2 for MILE) so the intervention signal survives both
         # the per-transition and chunked sampling paths.
         self.default_intervention_label = default_intervention_label
+        # epoch_sampling: visit every transition / chunk start once per shuffled pass instead of i.i.d.
+        self.epoch_sampling = bool(epoch_sampling)
+        self._epoch_orders = {"all": EpochOrder(), "chunks": EpochOrder()}
 
         # Uniform per-sample weight applied to all offline samples (surfaced as batch["weight"]);
         # update via set_weights(). Offline data is assumed homogeneous, so a single scalar.
@@ -814,6 +818,9 @@ class H5ReplayBuffer(BaseReplayBuffer):
     def sample_indices(self, batch_size: int, sampler: "BaseSampler" = None, **kwargs) -> np.ndarray:
         if self.is_empty():
             return np.zeros((0,), dtype=np.int64)
+        if self.epoch_sampling:
+            n = len(self._index)
+            return np.asarray(self._epoch_orders["all"].draw(n, lambda: range(n), batch_size), dtype=np.int64)
         return np.random.randint(0, len(self._index), size=(batch_size,), dtype=np.int64)
 
     def _construct_transitions_from_indices(self, indices: np.ndarray) -> List[Transition]:
@@ -928,7 +935,10 @@ class H5ReplayBuffer(BaseReplayBuffer):
             return []
         import random as _random
 
-        if max_chunks > len(valid_starts):
+        if self.epoch_sampling:
+            # Every valid chunk start once per pass, reshuffled between passes.
+            starts = self._epoch_orders["chunks"].draw(chunk_size, lambda: valid_starts, max_chunks)
+        elif max_chunks > len(valid_starts):
             # Sample with replacement if we request more chunks than available
             starts = _random.choices(valid_starts, k=max_chunks)
         else:

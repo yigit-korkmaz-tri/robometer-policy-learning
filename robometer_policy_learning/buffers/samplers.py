@@ -23,6 +23,46 @@ def _stack_values(values):
     return torch.stack([torch.as_tensor(v) for v in values])
 
 
+class EpochOrder:
+    """Hands out a population's items in shuffled passes (epochs) instead of i.i.d. draws.
+
+    Every item is returned exactly once per pass, in a fresh random order each pass; a batch that
+    crosses a pass boundary takes the rest of the old pass plus the start of the new one. Buffers keep
+    one per sampling pool. ``draw(key, build_items, k)`` rebuilds the population (``build_items()``)
+    and starts a new pass whenever ``key`` changes, e.g. when the buffer has grown -- the unfinished
+    pass is dropped then, so in iterative HITL a pass restarts after each collection phase.
+    """
+
+    def __init__(self):
+        self._key = None
+        self._items: List[Any] = []
+        self._perm: List[int] = []
+        self._cursor = 0
+        self.passes_completed = 0
+
+    def _new_pass(self):
+        self._perm = list(range(len(self._items)))
+        random.shuffle(self._perm)
+        self._cursor = 0
+
+    def draw(self, key, build_items, k: int) -> List[Any]:
+        if key != self._key:
+            self._key = key
+            self._items = list(build_items())
+            self._new_pass()
+        if not self._items or k <= 0:
+            return []
+        out: List[Any] = []
+        while len(out) < k:
+            if self._cursor >= len(self._perm):
+                self.passes_completed += 1
+                self._new_pass()
+            take = min(k - len(out), len(self._perm) - self._cursor)
+            out.extend(self._items[i] for i in self._perm[self._cursor : self._cursor + take])
+            self._cursor += take
+        return out
+
+
 class BaseSampler(abc.ABC):
     """Base class for sampling strategies."""
 
