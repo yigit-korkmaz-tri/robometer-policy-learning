@@ -111,6 +111,18 @@ def extract_vlm_features(pi0_policy, observations: Dict[str, Any]) -> torch.Tens
     return vlm_hidden_states
 
 
+def policy_action_horizon(pi0_policy):
+    """Action-chunk length of an openpi policy, or None if it cannot be determined.
+
+    Older dsrl_openpi forks set ``Policy.action_horizon``; the current one does not (it was dropped in
+    an upstream merge), so fall back to the wrapped model's ``action_horizon``.
+    """
+    horizon = getattr(pi0_policy, "action_horizon", None)
+    if horizon is None:
+        horizon = getattr(getattr(pi0_policy, "_model", None), "action_horizon", None)
+    return horizon
+
+
 def pi0_infer_with_noise(
     pi0_policy,
     observations: Dict[str, Any],
@@ -142,7 +154,7 @@ def pi0_infer_with_noise(
             print("no noise passed, doing regular pi0/pi0.5 inference (logged once)")
             _WARNED_NO_NOISE = True
     else:
-        horizon = getattr(pi0_policy, "action_horizon", None)
+        horizon = policy_action_horizon(pi0_policy)
         #print(f"horizon: {horizon}, noise.shape: {noise.shape}, noise.min: {noise.min()}, noise.max: {noise.max()}")
         if horizon is None:
             raise ValueError("Pi0 policy is missing `action_horizon` attribute; cannot reshape noise to (B, T, D).")
@@ -302,7 +314,7 @@ class Pi0Wrapper:
 
     @property
     def action_horizon(self):
-        return getattr(self.policy, "action_horizon", None)
+        return policy_action_horizon(self.policy)
 
     def resize_images_if_image(self, images: np.ndarray) -> np.ndarray:
         """Resize images to 224x224"""

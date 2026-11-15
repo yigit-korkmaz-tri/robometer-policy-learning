@@ -440,6 +440,10 @@ class Pi0LiberoHitlWorker:
         logger.info(f"Saved HITL debug video ({len(frames)} frames) to {path}")
         return path
 
+    def _step_extras(self, label) -> Dict:
+        """Extra per-step fields to store with each transition; subclasses add e.g. the chunk's noise."""
+        return {}
+
     @staticmethod
     def _store_obs(obs) -> Dict[str, np.ndarray]:
         """Copy the raw pi0 obs keys we persist (images uint8, state float); pi0 normalizes internally."""
@@ -527,6 +531,7 @@ class Pi0LiberoHitlWorker:
                         done=bool(terminated),
                         truncated=bool(truncated),
                         intervention=int(label),
+                        **self._step_extras(label),
                     )
                 )
 

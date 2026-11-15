@@ -96,6 +96,15 @@ class FlowMILEConfig(BaseAlgorithmConfig):
     # draws monte_carlo_samples of them per state, so N should be >= monte_carlo_samples to restore
     # per-step baseline randomness. Memory cost is ~ N * horizon * action_dim floats per transition.
     stored_rollout_pool_size: int = 50
+    # Requires use_stored_rollout_samples=True. When True, the frozen ``rollout_policy`` is the INITIAL
+    # (pretrained) policy pi_0 for the whole HITL run instead of a per-round snapshot. The stored pools
+    # still come from each round's actual collection policy (the HITL loop passes it to
+    # precompute_rollout_samples explicitly), so the probit baseline stays tied to the policy the human
+    # reacted to. What changes is every OTHER use of rollout_policy: the reference in
+    # reference_relative_score, the anchor-loss target, and the fresh-sample fallback for rows without
+    # a pool (e.g. offline_mode='self' anchors, which pi_0 collected). Without stored pools the probit
+    # baseline itself would come from pi_0 for data collected by later policies, hence the requirement.
+    fixed_initial_rollout_policy: bool = False
 
     # ----- Anchor regularizer (fine-tuning stability) -----
     # Coefficient for matching the online velocity field to the frozen rollout velocity field on

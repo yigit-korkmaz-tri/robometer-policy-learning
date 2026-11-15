@@ -206,6 +206,14 @@ class WandbLogger(Logger):
             dictionary[f"{prefix}/step"] = step
         self.logger.log(dictionary, **kwargs)
 
+    def define_step_metric(self, prefix: str, step_key: str) -> None:
+        """Plot every ``{prefix}/*`` metric against ``{prefix}/{step_key}`` instead of wandb's global step.
+
+        ``{prefix}/{step_key}`` must be logged in the same ``log`` call as the metrics it indexes.
+        """
+        self.logger.define_metric(f"{prefix}/{step_key}")
+        self.logger.define_metric(f"{prefix}/*", step_metric=f"{prefix}/{step_key}")
+
     def log_hparams(self, cfg: dict) -> None:
         """Logs the hyperparameters of the experiment.
 

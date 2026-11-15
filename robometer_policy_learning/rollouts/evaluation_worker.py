@@ -150,6 +150,9 @@ class EvaluationWorker:
         std_reward = np.std(all_rewards)
         avg_steps = np.mean(all_steps)
         success_rate = np.mean(all_success)
+        # NaN (not 0) when nothing succeeded, so it can't be mistaken for an instant success.
+        success_steps = [s for s, ok in zip(all_steps, all_success, strict=True) if ok]
+        avg_success_steps = float(np.mean(success_steps)) if success_steps else float("nan")
 
         eval_metrics = {
             "avg_reward": avg_reward,
@@ -157,6 +160,7 @@ class EvaluationWorker:
             "min_reward": np.min(all_rewards),
             "max_reward": np.max(all_rewards),
             "avg_steps": avg_steps,
+            "avg_success_steps": avg_success_steps,
             "success_rate": success_rate,
             "num_eval_episodes": num_episodes,
             "dataset_scene": bool(getattr(self.eval_env, "dataset_scene_restored", False)),
@@ -166,6 +170,7 @@ class EvaluationWorker:
         logger.info(f"  Average Reward: {avg_reward:.3f} ± {std_reward:.3f}")
         logger.info(f"  Success Rate: {success_rate:.1%}")
         logger.info(f"  Average Steps: {avg_steps:.1f}")
+        logger.info(f"  Average Steps (successful): {avg_success_steps:.1f}")
 
         return eval_metrics
 
@@ -556,12 +561,16 @@ class BatchEvaluationWorker(EvaluationWorker):
         if total >= step_cap:
             logger.warning(f"Batched eval hit step cap ({step_cap}); recorded {len(success)}/{N} episodes.")
 
+        # NaN (not 0) when nothing succeeded, so it can't be mistaken for an instant success.
+        success_steps = [s for s, ok in zip(steps, success, strict=True) if ok]
+
         eval_metrics = {
             "avg_reward": float(np.mean(rewards)) if rewards else 0.0,
             "std_reward": float(np.std(rewards)) if rewards else 0.0,
             "min_reward": float(np.min(rewards)) if rewards else 0.0,
             "max_reward": float(np.max(rewards)) if rewards else 0.0,
             "avg_steps": float(np.mean(steps)) if steps else 0.0,
+            "avg_success_steps": float(np.mean(success_steps)) if success_steps else float("nan"),
             "success_rate": float(np.mean(success)) if success else 0.0,
             "num_eval_episodes": len(success),
             "dataset_scene": bool(getattr(self.eval_env, "dataset_scene_restored", False)),
@@ -570,6 +579,9 @@ class BatchEvaluationWorker(EvaluationWorker):
         logger.info(f"  Average Reward: {eval_metrics['avg_reward']:.3f} ± {eval_metrics['std_reward']:.3f}")
         logger.info(f"  Success Rate: {eval_metrics['success_rate']:.1%}")
         logger.info(f"  Average Steps: {eval_metrics['avg_steps']:.1f}")
+        logger.info(
+            f"  Average Steps (successful): {eval_metrics['avg_success_steps']:.1f}"
+        )
 
         if self.record_video:
             eval_metrics.update(self._flush_video(video_frames))

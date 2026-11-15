@@ -61,6 +61,8 @@ online_algorithm.critic_optimizer_lr=1e-5 'env.task_ids=[57,58,59]' policy.mlp.h
 | `config_distributed.yaml` | `train_async.py` | learner / rollout / eval roles |
 | `libero_online_rl.yaml` | `train.py` | online RL in LIBERO |
 | `robosuite.yaml` | `train.py` | online RL in robosuite |
+| `robomimic_{lowdim,image}_sac.yaml` | `train.py` | online SAC in the env reconstructed from a robomimic dataset |
+| `robomimic_{lowdim,image}_iql_sac.yaml` | `train.py` | offline IQL on the (dense-relabeled) demos → online SAC in the same env |
 | `robomimic_{lowdim,image}_{bc,dp,flow}.yaml` | `train_supervised.py` | supervised training on robomimic |
 | `robomimic_hitl.yaml`, `robomimic_hgdagger.yaml` | `train_hitl.py` | HITL training (MILE family / HG-DAgger) |
 | `robomimic_collect_hitl.yaml`, `robomimic_collect_hgdagger.yaml` | `collect_hitl_rollout.py` | HITL collection |

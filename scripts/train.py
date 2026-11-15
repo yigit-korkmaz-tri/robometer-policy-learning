@@ -9,6 +9,8 @@ import os
 if "MUJOCO_GL" not in os.environ:
     os.environ["MUJOCO_GL"] = "egl"
 
+import random
+
 import numpy as np
 import torch
 from hydra import main as hydra_main
@@ -45,6 +47,14 @@ def main(cfg: DictConfig):
     """Main training function."""
 
     OmegaConf.resolve(cfg)
+
+    # Seed model initialization, exploration noise and replay sampling as well as the env.
+    seed = OmegaConf.select(cfg, "training.seed", default=0)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
     # Setup all training components
     components = setup_training(cfg)
@@ -112,6 +122,19 @@ def main(cfg: DictConfig):
                 chunk_size=cfg.training.chunk_size, obs_as_sequence=False, gamma=gamma
             )
         logger.info(f"Offline Sampler: {sampler.__class__.__name__}")
+        if "robomimic" in str(cfg.env.env_name).lower() and cfg.training.num_rollouts > 0:
+            # Converted robomimic files carry sparse 0/1 rewards, while the online env emits dense
+            # shaped ones; mixing both in one buffer silently gives the critic two reward scales.
+            import h5py
+
+            with h5py.File(cfg.env.h5_dataset_path, "r") as f:
+                reward_type = f["data"].attrs.get("reward_type", "sparse (not relabelled)")
+            if reward_type != "dense_robosuite_shaped":
+                logger.warning(
+                    f"Offline dataset rewards are '{reward_type}', but the online robomimic env uses dense "
+                    "shaped rewards. Relabel first: uv run python scripts/relabel_robomimic_dense_reward.py "
+                    f"-i {cfg.env.h5_dataset_path}"
+                )
         offline_buffer = create_buffer(
             sampler=sampler,
             use_eval_server=components.use_eval_server,
@@ -197,7 +220,7 @@ def main(cfg: DictConfig):
                     # Save checkpoint periodically
                     if (i + 1) % cfg.training.save_interval == 0:
                         save_checkpoint(offline_algo, save_dir, i + 1)
-                    if (i + 1) % cfg.eval.eval_freq == 0 and cfg.eval.eval_freq is not None:
+                    if cfg.eval.eval_freq is not None and (i + 1) % cfg.eval.eval_freq == 0:
                         offline_eval_metrics = offline_evaluation_worker.run(offline_algo.actor)
                         wandb_logger.log(offline_eval_metrics, step=i, prefix="offline/eval")
 
@@ -211,6 +234,13 @@ def main(cfg: DictConfig):
             online_algo_config = SACConfig(**online_algo_dict)
         else:
             raise ValueError(f"Unknown online algorithm: {cfg.alg.online_alg_name}")
+        # Critic construction is keyed off alg.offline_alg_name (bc/dp/flow build none), so an
+        # online-only SAC run must keep a critic-building placeholder there (e.g. iql).
+        if critic is None:
+            raise ValueError(
+                f"SAC needs a critic, but none was built (alg.offline_alg_name={cfg.alg.offline_alg_name}). "
+                "bc/dp/flow build no critic; set alg.offline_alg_name=iql (or sac) for online SAC."
+            )
 
         # Check if distributed reward relabeling is enabled
         if cfg.env.get("use_async_reward_relabel", False): 

@@ -403,6 +403,10 @@ class HitlRolloutWorker:
     labels (0=policy, 1=human) plus episode-level stats (``episode_len``,
     ``episode_num_interventions``). 'n' skips (discards) the current episode for both the keyboard
     and the SpaceMouse, including while the policy is driving; ESC raises KeyboardInterrupt.
+    ``step_fps`` caps the wall-clock rate of every env step (policy, expert or human) while a human is
+    watching (on-screen real/toggle collection) so they have time to react and steer; the sim itself
+    is unaffected. ``cmd_eps`` is the teleop deadzone: commands with a smaller pose-delta norm are
+    ignored (the sim stays paused) so sensor drift does not add near-zero steps.
     """
 
     def __init__(
@@ -437,6 +441,7 @@ class HitlRolloutWorker:
         record_video: bool = False,
         video_dir: str = None,
         video_fps: int = 20,
+        step_fps: Optional[float] = None,
     ):
         self.env = env
         self.actor = actor
@@ -452,7 +457,19 @@ class HitlRolloutWorker:
         # store_only_human is set (that already segments human-only runs).
         self.segment_by_intervention = bool(segment_by_intervention)
         self.cmd_eps = float(cmd_eps)
+        # Teleop commands scale with pos/rot_sensitivity and can exceed the action space; the
+        # controller clips them on execution, so clip before storing too, else the buffer hands the
+        # policy targets outside the [-1, 1] range it normalizes to. Same bounds the buffers use.
+        asp = getattr(env, "single_action_space", None) or getattr(env, "action_space", None)
+        if asp is not None and np.all(np.isfinite(asp.low)) and np.all(np.isfinite(asp.high)):
+            self._action_low = np.asarray(asp.low, dtype=np.float32).reshape(-1)[: self.action_dim]
+            self._action_high = np.asarray(asp.high, dtype=np.float32).reshape(-1)[: self.action_dim]
+        else:
+            self._action_low = self._action_high = None
         self.enable_render = bool(enable_render)
+        # Wall-clock cap on env steps during on-screen human collection (None = unthrottled).
+        # Only pacing changes: env.step advances a fixed sim timestep regardless of real time.
+        self.step_fps = float(step_fps) if step_fps else None
 
         # Debug video recording: when on, each episode's executed-step frames (with the
         # POLICY/HUMAN overlay) are buffered and written to an mp4 under ``video_dir``.
@@ -684,6 +701,10 @@ class HitlRolloutWorker:
         st["pos"] += 1
         return a
 
+    def _step_extras(self, label) -> Dict:
+        """Extra per-step fields stored in each transition's info; subclasses add e.g. the chunk's noise."""
+        return {}
+
     def _expert_chunk(self, obs_t):
         """Full (env-space) action chunk from the frozen expert policy, shape ``[chunk_len, action_dim]``."""
         with torch.inference_mode():
@@ -723,6 +744,12 @@ class HitlRolloutWorker:
         n = min(self.action_dim, a.shape[0])
         fixed[:n] = a[:n]
         return fixed
+
+    def _clip_action(self, a):
+        """Clip to the env action space (no-op if it is unbounded)."""
+        if self._action_low is None:
+            return a
+        return np.clip(a, self._action_low, self._action_high).astype(np.float32)
 
     def _delta_to_absolute_action(self, ha):
         """Convert a delta-mode teleop action into the equivalent absolute-pose action.
@@ -842,6 +869,8 @@ class HitlRolloutWorker:
         use_criteria = allow_human and self.simulated
         use_expert_toggle = allow_human and self.expert_teleop and not self.simulated
         use_teleop = allow_human and not self.simulated and not self.expert_teleop
+        # Throttle only when a human is watching and may need to react (not self-collect/simulated).
+        throttle = self.step_fps is not None and self.enable_render and (use_teleop or use_expert_toggle)
 
         obs = _extract0(env.reset()[0])
         if use_teleop:
@@ -869,6 +898,7 @@ class HitlRolloutWorker:
         pending, aborted = [], False  # transitions buffered until episode end
 
         while not done:
+            t_step = time.perf_counter()
             # 'n' discards this episode immediately, including while the policy is still driving.
             if self._skip_key is not None and self._skip_key.consume():
                 aborted = True
@@ -978,7 +1008,7 @@ class HitlRolloutWorker:
                     gripper_changed = toggled if self.teleop_device == "spacemouse" else grasp != last_grasp
                     if moved or gripper_changed:
                         cmd = self._delta_to_absolute_action(ha) if self.absolute_pose else ha
-                        action, last_grasp = self._fit_action(cmd), grasp
+                        action, last_grasp = self._clip_action(self._fit_action(cmd)), grasp
                         break
                     last_grasp = grasp
                     if self._render(phase, episode_id, steps, "HUMAN  (waiting)", success, record=False) == 27:
@@ -1031,7 +1061,7 @@ class HitlRolloutWorker:
                         truncated=float(truncated),
                         episode_id=ep_store,
                         step_in_episode=step_store,
-                        info={"intervention": label},
+                        info={"intervention": label, **self._step_extras(label)},
                     )
                 )
 
@@ -1039,6 +1069,13 @@ class HitlRolloutWorker:
             steps += 1
             if self._render(phase, episode_id, steps, mode, success) == 27:
                 raise KeyboardInterrupt
+            # Pad every step to 1/step_fps (evens out cached-chunk vs. inference steps, and slows human
+            # teleop without shrinking its actions). t_step is taken before the teleop wait, so time
+            # spent waiting for a command counts and the first move after takeover is not delayed.
+            if throttle:
+                remaining = 1.0 / self.step_fps - (time.perf_counter() - t_step)
+                if remaining > 0:
+                    time.sleep(remaining)
 
         # Flush the whole episode at once (unless aborted), stamping episode-level stats onto
         # every transition's info so downstream sample-weighting can use them. When require_success

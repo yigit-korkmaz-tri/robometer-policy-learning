@@ -1,0 +1,106 @@
+# Offline IQL -> online SAC in the robosuite env reconstructed from a robomimic dataset (image obs).
+#
+# Phase 1 trains IQL on the demos in env.h5_dataset_path; phase 2 copies its actor/critic into SAC
+# and fine-tunes online in the env rebuilt from that same file's metadata (task, robot, controller,
+# scene, camera size), sampling buffer.sample_ratio of every batch from the demos.
+# Observations: `agentview_image` (finetuned IMPALA featurizer, "Mode B") + proprio `state`.
+#
+# The demos MUST carry the same dense reward the online env emits. Converted robomimic files store
+# sparse 0/1 rewards, so relabel them once first (writes *_dense.hdf5):
+#   uv run python scripts/relabel_robomimic_dense_reward.py \
+#     -i data/robomimic_datasets/robomimic_image/square/ph/image_converted.hdf5
+#
+# Usage:
+#   uv run python scripts/train.py --config-name=robomimic_image_iql_sac \
+#     env.h5_dataset_path=data/robomimic_datasets/robomimic_image/square/ph/image_converted_dense.hdf5
+defaults:
+  - algorithm@offline_algorithm: iql
+  - algorithm@online_algorithm: sac
+  - reward_model: null
+  - policy@policy: mlp # Options: mlp, rnn, transformer
+  - value_function@value_function: mlp # Options: mlp, rnn, transformer
+
+# Debug mode
+debug: false
+
+# Environment configuration
+env:
+  env_name: "robomimic"  # task/robot/controller are read from the robomimic dataset metadata
+  h5_dataset_path: "data/robomimic_datasets/robomimic_image/square/ph/image_converted_dense.hdf5"  # dense-relabelled demos
+  max_episode_steps: 400
+  use_full_state: false  # proprio only; object pose must be inferred from the image
+  use_gt_rewards: true  # online: env dense reward; offline: the file's (relabelled dense) rewards
+  dino_image_keys: null
+  extra_keys_to_drop: ["robot0_eye_in_hand_image", "prompt", "language"]
+  success_bonus_amount: 0.0
+
+# Training configuration
+training:
+  num_envs: 1
+  num_rollouts: 1_000_000  # online env steps
+  chunk_size: null
+  n_action_steps: 1
+  use_rnn: false
+  num_offline_steps: 100_000  # IQL gradient steps before going online
+  load_dir: null
+  save_interval: 25000  # offline-phase checkpoint interval
+  continue_training: false
+  seed: 0
+
+# Replay buffer configuration
+buffer:
+  capacity: 200_000  # uint8 images per transition; lower than low-dim to bound RAM
+  sample_ratio: 0.5  # fraction of each online batch drawn from the demos
+  use_success_fail_buffer: false
+  success_fail_sample_ratio: 0.5
+  success_detection_duration: 2
+  success_detection_threshold: 0.65
+  distributed_reward_relabel:
+    enabled: false
+    server_address: "localhost:50052"
+    max_queue_size: 100
+    timeout: 60.0
+    flush_interval: 0.1
+
+# Logging configuration
+logging:
+  wandb_project: mile_dp
+  wandb_entity: ykorkmaz
+  wandb_offline: false
+  wandb_log_dir_base: logs/wandb
+  wandb_name: "robomimic_image_iql_sac"
+  log_level: "INFO"
+
+# Algorithm configuration
+alg:
+  offline_alg_name: iql  # offline phase; its actor/critic/optimizers are handed to SAC
+  online_alg_name: sac
+
+# Evaluation configuration
+eval:
+  eval_freq: 20000  # offline: gradient steps; online: env steps
+  eval_num_episodes: 20
+  eval_record_video: true
+  eval_on_first_step: true  # online phase starts with an eval of the IQL policy
+
+# Model configuration
+model:
+  dinov2_model: null
+  sentence_model: null
+  image_encoder:
+    type: impala  # null | impala | resnet | dinov2 | vit
+    finetune: true
+    image_feature_dim: 128
+    resnet_backbone: ResNet18
+    resnet_pretrained: true
+    resnet_pool: spatial_softmax
+    spatial_softmax_num_kp: 32
+    impala_nn_scale: 1
+    impala_num_blocks_per_stack: 2
+    impala_use_smaller: false
+    impala_output_dim: null
+    vit_model: google/vit-base-patch16-224-in21k
+    vit_processor: null
+    vit_pool: cls
+    vit_image_size: null
+    vit_projection_dim: null

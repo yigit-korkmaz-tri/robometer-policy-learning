@@ -13,6 +13,7 @@ iteration:
      training buffer (online, optionally mixed with offline demos labelled intervention=2 via
      MixedReplayBuffer); with ``hitl.use_epochs=true`` it is a number of epochs instead, one epoch
      being ceil(len(training buffer) / batch_size) steps, so the step count tracks the growing data;
+     the policy is evaluated every ``eval.eval_freq`` steps (null => once, at the end of each iteration);
 then repeats.
 
 ``hitl.recent_round_ratio`` sets the fraction of each ONLINE batch drawn from the current (newest)
@@ -20,6 +21,19 @@ iteration's rollouts, the rest uniformly from all earlier iterations (0.5 => the
 weighs as much as everything before it). null => uniform over the whole online buffer, under which the
 newest iteration's share shrinks to ~1/num_iterations. Offline anchors are mixed in separately, by
 ``hitl.offline_sample_ratio``.
+
+``hitl.human_ratio`` sets the fraction of each ONLINE batch drawn from human-correction (label-1)
+samples, the rest from autonomous-policy (label-0) ones, like FlowDAgger's dual buffer;
+``recent_round_ratio`` then applies within each label. A chunk counts as human when its first step
+is. null (or either label missing) => label-agnostic, so the human share follows the intervention rate.
+For MILE-style algorithms this also shifts the probit's class balance (its BCE is unweighted), so the
+learned intervention probabilities are no longer calibrated to the true rate.
+
+``hitl.retrain_from_init=true`` makes each iteration's training phase restart from the initial
+(``load_dir``) weights with a fresh optimizer on the aggregated data, instead of fine-tuning the
+previous iteration's policy. Collection still runs with the previous iteration's trained policy, and
+the MILE rollout-policy snapshot / stored pools are taken before the reset. Pair with
+``hitl.use_epochs=true`` so the training budget grows with the buffer.
 
 ``hitl.epoch_sampling=true`` makes every buffer hand out its samples (or chunks) in shuffled passes,
 each exactly once per pass, instead of independent random draws. A pass restarts whenever a buffer
@@ -39,7 +53,8 @@ Alternatively, set ``hitl.precollected_hitl_dataset`` to a HITL HDF5 written by
 ``scripts/collect_hitl_rollout.py`` to train on precollected interventions instead of collecting
 online. In that mode online collection is skipped (no expert/criterion/online-rollout worker) and
 ``hitl.num_iterations`` must be 1 (a single train phase over the loaded buffer). It is still
-compatible with ``offline_mode='warmup'`` (which just loads its demo H5).
+compatible with ``offline_mode='warmup'`` (which just loads its demo H5). ``hitl.store_only_human``
+filters the loaded dataset the same way it filters online collection (true => human steps only).
 
 Algorithm is selected by ``alg.offline_alg_name`` (+ ``algorithm@offline_algorithm`` for its
 hyperparameters), e.g. ``mile``, ``bc``, or ``dp``. For algorithms with a frozen rollout policy
@@ -93,7 +108,9 @@ Controls:
   * Toggle:     Tab = take/release control (expert drives while taken over), ESC = quit.
   'n' works for either device, including while the policy is still driving. Taking over keeps a
   closed gripper closed. Motion scale: ``teleop.pos_sensitivity`` / ``teleop.rot_sensitivity``
-  (default 1.0).
+  (default 1.0). ``teleop.step_fps=<N>`` slows every step (policy and human) to ~N steps/s on screen
+  so the human has time to take over and steer (null = full speed; only wall-clock pacing changes,
+  not the sim). ``teleop.cmd_deadzone`` ignores teleop commands smaller than it (sensor drift).
 """
 
 import os
@@ -159,10 +176,6 @@ ALG_TO_CONFIG = {
     "dp": DPConfig,
     "flow": FlowMatchingConfig,
 }
-
-# Algorithms that perform (optionally weighted) behavior cloning — usable for HG-DAgger and for
-# SIRIUS / IWR reweighting. "bc" is Gaussian; "dp" is the diffusion-policy analogue.
-BC_STYLE_ALGS = {"bc", "dp", "flow"}
 
 # MILE-style algorithms: their probit intervention (BCE) loss needs BOTH policy (label 0) and
 # human-correction (label 1) transitions, so they are incompatible with store_only_human=true.
@@ -267,6 +280,10 @@ def main(cfg: DictConfig):
         log_dir=f"{cfg.logging.wandb_log_dir_base}/{string_time}",
         prefix="offline",
     )
+    # Eval / collect curves are indexed by HITL iteration (0 = the pretrained policy) rather than by
+    # gradient step, so runs with different train_steps_per_iter / use_epochs line up.
+    wandb_logger.define_step_metric("eval", "iteration")
+    wandb_logger.define_step_metric("collect", "iteration")
 
     # ---- Align with the loaded model: adopt env / training / model / policy from the pretraining
     # run's saved Hydra config so the env build, chunking, obs normalization and architecture match
@@ -415,6 +432,23 @@ def main(cfg: DictConfig):
             "alg.offline_alg_name=bc for HG-DAgger-style human-only cloning."
         )
 
+    # retrain_from_init + Flow-MILE: the online actor restarts at pi_0 every round, so the reference
+    # policy must be pi_0 too (else the reference-relative score starts at an arbitrary offset each
+    # round), and the probit baseline must then come from stored collection-time pools (else it would
+    # be sampled from pi_0 for data later policies collected). Fail early, before any env is built.
+    if bool(OmegaConf.select(cfg, "hitl.retrain_from_init", default=False)) and alg_name == "flow_mile":
+        missing = [
+            k for k in ("use_stored_rollout_samples", "fixed_initial_rollout_policy")
+            if not OmegaConf.select(cfg, f"offline_algorithm.{k}", default=False)
+        ]
+        if missing:
+            raise ValueError(
+                "hitl.retrain_from_init=true with alg.offline_alg_name=flow_mile requires "
+                + " and ".join(f"offline_algorithm.{k}=true" for k in missing)
+                + " (the reference policy must be the initial policy the actor is reset to, with the "
+                "probit baseline drawn from stored collection-time pools)."
+            )
+
     # ---- Intervention source: keyboard, spacemouse, or a simulated human (expert + criterion).
     # Skipped entirely in precollected-dataset mode (no online collection). ----
     human_mode = str(OmegaConf.select(cfg, "hitl.human_mode", default="real")).lower()
@@ -527,6 +561,11 @@ def main(cfg: DictConfig):
 
     # Tracks each transition's collection iteration so hitl.recent_round_ratio can oversample the newest.
     recent_round_ratio = OmegaConf.select(cfg, "hitl.recent_round_ratio", default=None)
+    # Fraction of each ONLINE batch from human-correction (label-1) samples; recent_round_ratio then
+    # applies within each label. null => label-agnostic. Chunks are labelled by their first step.
+    human_ratio = OmegaConf.select(cfg, "hitl.human_ratio", default=None)
+    if human_ratio is not None and store_only_human:
+        logger.warning("hitl.human_ratio has no effect with store_only_human=true (no policy-labelled samples).")
     online_buffer = RoundReplayBuffer(
         capacity=int(OmegaConf.select(cfg, "hitl.online_buffer_capacity", default=200000)),
         remove_obs_keys=list(remove_obs_keys),
@@ -534,6 +573,7 @@ def main(cfg: DictConfig):
         min_action=action_min,
         max_action=action_max,
         recent_ratio=None if recent_round_ratio is None else float(recent_round_ratio),
+        human_ratio=None if human_ratio is None else float(human_ratio),
         epoch_sampling=epoch_sampling,
     )
 
@@ -628,13 +668,10 @@ def main(cfg: DictConfig):
             analyze_intervention_segments(self_buffer, chunk_size=chunk_size, context="self-collected demos")
 
     if precollected_hitl_dataset:
-        # HG-DAgger on a precollected dataset: when training a (plain, no-reweighting) cloning algo
-        # -- BC or its diffusion analogue DP -- keep only the human-correction steps and drop
-        # autonomous-policy steps (re-segmenting contiguous human runs so chunked sampling stays
-        # valid). reweighting is read here (it is defined further down for the online path) so the
-        # filter decision is available at load time.
-        _reweighting = OmegaConf.select(cfg, "hitl.reweighting", default=None)
-        keep_only_human = (alg_name in BC_STYLE_ALGS) and (_reweighting is None)
+        # Same switch as online collection: hitl.store_only_human=true keeps only the human-correction
+        # steps (HG-DAgger; contiguous human runs are re-segmented so chunked sampling stays valid),
+        # false keeps every step incl. autonomous-policy ones (e.g. plain BC on all HITL data).
+        keep_only_human = store_only_human
         stats = load_precollected_hitl(
             precollected_hitl_dataset, online_buffer, lowdim_stats, remove_obs_keys,
             keep_only_human=keep_only_human,
@@ -642,7 +679,7 @@ def main(cfg: DictConfig):
         )
         if keep_only_human:
             logger.info(
-                f"HG-DAgger ({alg_name} + reweighting=null): filtered precollected dataset to human-only "
+                f"store_only_human=true ({alg_name}): filtered precollected dataset to human-only "
                 f"steps -> {stats['transitions']} human-correction transitions across {stats['episodes']} "
                 "contiguous human segments (autonomous-policy steps dropped)."
             )
@@ -690,9 +727,16 @@ def main(cfg: DictConfig):
     algo_config.logger = wandb_logger
     algo = algo_config.create()
     needs_rollout_policy = hasattr(algo, "set_rollout_policy")  # e.g. MILE
+    # FlowMILE fixed_initial_rollout_policy: freeze rollout_policy = pi_0 ONCE, before any training
+    # (keep_best reloads later don't touch this copy). Per-round collection policies then only feed
+    # the stored probit-baseline pools (see the training phase below).
+    fixed_initial_rollout = bool(getattr(algo, "fixed_initial_rollout_policy", False))
+    if fixed_initial_rollout:
+        algo.set_rollout_policy(copy.deepcopy(algo.actor))
+        logger.info("fixed_initial_rollout_policy=true: rollout_policy frozen to the initial (pretrained) policy.")
     logger.info(
         f"HITL algorithm: {alg_name} | store_only_human={store_only_human} | offline_mode={offline_mode} | "
-        f"recent_round_ratio={recent_round_ratio} | epoch_sampling={epoch_sampling}"
+        f"recent_round_ratio={recent_round_ratio} | human_ratio={human_ratio} | epoch_sampling={epoch_sampling}"
     )
 
     reweighting = OmegaConf.select(cfg, "hitl.reweighting", default=None)
@@ -738,6 +782,8 @@ def main(cfg: DictConfig):
             teleop_device=str(OmegaConf.select(cfg, "teleop.device", default="keyboard")),
             pos_sensitivity=float(OmegaConf.select(cfg, "teleop.pos_sensitivity", default=1.0)),
             rot_sensitivity=float(OmegaConf.select(cfg, "teleop.rot_sensitivity", default=1.0)),
+            step_fps=OmegaConf.select(cfg, "teleop.step_fps", default=None),
+            cmd_eps=float(OmegaConf.select(cfg, "teleop.cmd_deadzone", default=1e-6)),
             # Only open the teleop device (e.g. the single SpaceMouse) when a real human will actually
             # teleoperate online. Warmup/expert/simulated collection is autonomous, so a worker built
             # only for that must not grab the device (else concurrent/repeated runs collide on it).
@@ -778,7 +824,7 @@ def main(cfg: DictConfig):
         n_envs=eval_num_envs,
         device=device,
         seed=OmegaConf.select(cfg, "hitl.seed", default=0)+14,
-        max_episode_steps=cfg.env.max_episode_steps,
+        max_episode_steps=cfg.env.max_episode_steps + 200,
         use_full_state=cfg.env.use_full_state,
         terminate_on_success=True,
         chunk_size=chunk_size,
@@ -792,7 +838,7 @@ def main(cfg: DictConfig):
         record_video=cfg.eval.eval_record_video,
         logger=wandb_logger,
         lowdim_obs_stats=lowdim_stats,
-        max_episode_steps=int(cfg.env.max_episode_steps),
+        max_episode_steps=int(cfg.env.max_episode_steps) + 200,
     )
 
     # =====================================================================================
@@ -803,6 +849,15 @@ def main(cfg: DictConfig):
     # true => train_steps_per_iter counts epochs over the current training buffer, not gradient steps.
     use_epochs = bool(OmegaConf.select(cfg, "hitl.use_epochs", default=False))
     clear_each_iter = bool(OmegaConf.select(cfg, "hitl.clear_buffer_each_iter", default=False))
+    # true => each iteration's training phase restarts from the initial weights + a fresh optimizer
+    # (aggregate-and-retrain) instead of fine-tuning the previous iteration's policy.
+    retrain_from_init = bool(OmegaConf.select(cfg, "hitl.retrain_from_init", default=False))
+    if retrain_from_init and not use_epochs:
+        logger.warning(
+            "hitl.retrain_from_init=true with a fixed step budget: every iteration retrains from scratch "
+            "on a growing buffer with the same train_steps_per_iter, so later iterations get fewer passes "
+            "over the data. Consider hitl.use_epochs=true."
+        )
     save_interval = int(OmegaConf.select(cfg, "hitl.save_interval", default=1))
 
     best_success_rate = -1.0       # global best across all iterations  -> save_dir/best
@@ -843,6 +898,30 @@ def main(cfg: DictConfig):
                 reloaded = True
         return reloaded
 
+    # Snapshot the INITIAL training state (before any gradient step) for retrain_from_init: every
+    # module / optimizer in the algorithm's component_names (actor, online_actor when EMA is on,
+    # actor_optimizer), kept on CPU so it doesn't double GPU memory. The EMA wrapper averages INTO
+    # ``actor`` and has no state of its own, so restoring ``actor`` restores it too. The optimizer's
+    # initial state_dict has no per-param state, so loading it wipes the Adam moments.
+    init_state = {}
+    if retrain_from_init:
+        for comp in getattr(algo, "component_names", []):
+            obj = getattr(algo, comp, None)
+            if isinstance(obj, torch.nn.Module):
+                init_state[comp] = {k: v.detach().cpu().clone() for k, v in obj.state_dict().items()}
+            elif isinstance(obj, torch.optim.Optimizer):
+                init_state[comp] = copy.deepcopy(obj.state_dict())
+
+    def _reset_to_init():
+        """Restore the initial weights + optimizer IN PLACE (keeps worker / optimizer bindings valid)."""
+        for comp, sd in init_state.items():
+            getattr(algo, comp).load_state_dict(sd)
+        # MILE-family running stats of the probit gap: re-init so the first steps re-seed them from the
+        # restarted policy rather than the end of the previous iteration's run.
+        for reinit in ("_init_score_gap_normalization", "_init_logprob_gap_normalization"):
+            if hasattr(algo, reinit):
+                getattr(algo, reinit)()
+
     try:
         if not precollected_hitl_dataset and expert_policy is not None and human_mode in ("simulated", "toggle"):
             logger.info("Evaluating expert policy before training...")
@@ -850,7 +929,7 @@ def main(cfg: DictConfig):
         if bool(OmegaConf.select(cfg, "eval.eval_on_first_step", default=True)):
             logger.info("Evaluating initial policy before training...")
             eval_metrics = eval_worker.run(algo.actor)
-            wandb_logger.log(eval_metrics, step=algo.step_counter, prefix="eval")
+            wandb_logger.log({**eval_metrics, "iteration": 0}, step=algo.step_counter, prefix="eval")
             _maybe_save_best(eval_metrics)  # global best only (pre-training; not an iteration's best)
 
         for it in range(num_iterations):
@@ -944,7 +1023,12 @@ def main(cfg: DictConfig):
        
             # --- 2) Train (rollout_policy = frozen snapshot of the data-collection policy, for MILE) ---
             if needs_rollout_policy:
-                algo.set_rollout_policy(copy.deepcopy(algo.actor))
+                # The policy that just collected this round's data. Normally it becomes the frozen
+                # rollout_policy; with fixed_initial_rollout_policy, rollout_policy stays pi_0 and this
+                # snapshot is used only to draw the stored pools below.
+                collection_policy = copy.deepcopy(algo.actor).eval()
+                if not fixed_initial_rollout:
+                    algo.set_rollout_policy(collection_policy)
                 # FlowMILE with use_stored_rollout_samples: freeze each newly-collected state's probit
                 # baseline pool to THIS round's collection policy (just snapshotted above). Existing
                 # transitions keep the pool written the round they were collected, so a round-1
@@ -952,28 +1036,39 @@ def main(cfg: DictConfig):
                 # its human action. Online buffer only (offline anchors fall back to fresh samples for
                 # their discarded probit rows). No-op with clear_buffer_each_iter=true (buffer is fresh).
                 if getattr(algo, "use_stored_rollout_samples", False) and hasattr(algo, "precompute_rollout_samples"):
-                    n_written = algo.precompute_rollout_samples(online_buffer)
+                    n_written = algo.precompute_rollout_samples(online_buffer, pool_policy=collection_policy)
                     logger.info(
                         f"FlowMILE: stored rollout samples for {n_written} new transitions "
                         f"(from iteration {it + 1}'s collection policy)."
                     )
+            # retrain_from_init: reset only NOW, after collection (done with the previous iteration's
+            # policy) and after the rollout-policy snapshot + stored pools above, which must reflect
+            # that collection policy rather than the initial weights.
+            if retrain_from_init:
+                _reset_to_init()
+                logger.info(f"retrain_from_init: reset actor + optimizer to the initial weights for iteration {it + 1}")
             buffer_size = len(train_buffer)
             batch_size = int(OmegaConf.select(cfg, "offline_algorithm.batch_size", default=256))
             steps_per_epoch = max(1, -(-buffer_size // batch_size))  # ceil(buffer_size / batch_size)
             num_train_steps = train_steps_per_iter * steps_per_epoch if use_epochs else train_steps_per_iter
-            eval_freq_steps = OmegaConf.select(cfg, "eval.eval_freq", default=num_train_steps)
+            # eval.eval_freq is in gradient steps; null => one eval at the end of each iteration.
+            eval_freq = OmegaConf.select(cfg, "eval.eval_freq", default=None)
+            eval_freq_steps = num_train_steps if eval_freq is None else max(1, int(eval_freq))
             logger.info(
                 f"Training {num_train_steps} steps this iteration"
                 + (f" ({train_steps_per_iter} epochs)" if use_epochs else "")
-                + f"; eval every {eval_freq_steps} steps. "
-                f"1 epoch is {steps_per_epoch} steps with the current dataset "
+                + f"; eval every {eval_freq_steps} steps"
+                + (" (end of iteration). " if eval_freq is None else ". ")
+                + f"1 epoch is {steps_per_epoch} steps with the current dataset "
             )
             for i in tqdm(range(num_train_steps), desc="Training", unit="step"):
                 algo.train_step(logging_prefix="train")  # logs internally at algo.step_counter
                 # --- 3) Autonomous (no-human) evaluation ---
                 if (i + 1) % eval_freq_steps == 0:
                     eval_metrics = eval_worker.run(algo.actor)
-                    wandb_logger.log(eval_metrics, step=algo.step_counter, prefix="eval")
+                    # Mid-iteration evals (eval_freq < num_train_steps) land at fractional iterations.
+                    eval_iter = it + (i + 1) / num_train_steps
+                    wandb_logger.log({**eval_metrics, "iteration": eval_iter}, step=algo.step_counter, prefix="eval")
                     _maybe_save_best(eval_metrics, it=it+1)
             if (it + 1) % save_interval == 0:
                 save_checkpoint(algo, save_dir, it + 1)

@@ -157,6 +157,15 @@ class FlowMILE(BaseAlgorithm):
         self.use_stored_rollout_samples = bool(config.use_stored_rollout_samples)
         self.stored_rollout_pool_size = int(config.stored_rollout_pool_size)
         self.stored_rollout_key = "rollout_samples"
+        # rollout_policy = pi_0 for the whole run; pools are drawn from the per-round collection policy
+        # passed to precompute_rollout_samples (see config). Read by the HITL loop.
+        self.fixed_initial_rollout_policy = bool(config.fixed_initial_rollout_policy)
+        if self.fixed_initial_rollout_policy and not self.use_stored_rollout_samples:
+            raise ValueError(
+                "fixed_initial_rollout_policy=true requires use_stored_rollout_samples=true: without "
+                "collection-time pools the probit baseline would be sampled from the initial policy even "
+                "for data collected by later policies."
+            )
         # Fraction of the last batch's probit baseline that used stored (vs fresh fallback) samples.
         self._last_stored_sample_frac = float("nan")
         self.anchor_loss_weight = float(config.anchor_loss_weight)
@@ -205,6 +214,7 @@ class FlowMILE(BaseAlgorithm):
         print(f"FlowMILE: use_stored_rollout_samples={self.use_stored_rollout_samples}")
         if self.use_stored_rollout_samples:
             print(f"FlowMILE: stored_rollout_pool_size={self.stored_rollout_pool_size}")
+            print(f"FlowMILE: fixed_initial_rollout_policy={self.fixed_initial_rollout_policy}")
         print(f"FlowMILE: anchor_loss_weight={self.anchor_loss_weight}")
         print(f"FlowMILE: anchor_monte_carlo_samples={self.anchor_monte_carlo_samples}")
         print(f"FlowMILE: proximal_loss_weight={self.proximal_loss_weight}")
@@ -274,11 +284,17 @@ class FlowMILE(BaseAlgorithm):
             param.requires_grad_(False)
 
     @torch.no_grad()
-    def precompute_rollout_samples(self, buffer, batch_size: int = 128) -> int:
+    def precompute_rollout_samples(
+        self, buffer, batch_size: int = 128, pool_policy: Optional[FlowMatchingActor] = None
+    ) -> int:
         """Store a frozen pool of rollout-policy action chunks on transitions that lack one.
 
+        ``pool_policy`` is the policy the pools are sampled from; None => ``self.rollout_policy``. With
+        ``fixed_initial_rollout_policy`` the two differ: rollout_policy stays pi_0 while the caller
+        passes the round's actual collection policy here (it should already be in eval mode).
+
         For each transition in ``buffer`` WITHOUT ``self.stored_rollout_key`` in its info dict, draws
-        ``stored_rollout_pool_size`` action chunks from the CURRENT rollout policy for that
+        ``stored_rollout_pool_size`` action chunks from the pool policy for that
         transition's observation and writes them (normalized action space, ``[N, H, A]`` float32) to
         ``transition.info[self.stored_rollout_key]``. Transitions that already carry a pool are
         skipped, so in the iterative HITL loop each state keeps the samples written the round it was
@@ -293,9 +309,12 @@ class FlowMILE(BaseAlgorithm):
 
         Returns the number of transitions newly populated.
         """
-        if self.rollout_policy is None:
+        if pool_policy is None:
+            pool_policy = self.rollout_policy
+        if pool_policy is None:
             raise RuntimeError(
-                "precompute_rollout_samples requires a frozen rollout_policy. Call set_rollout_policy() first."
+                "precompute_rollout_samples requires a frozen rollout_policy (or an explicit pool_policy). "
+                "Call set_rollout_policy() first."
             )
         key = self.stored_rollout_key
         transitions = [t for t in buffer.get_all_transitions() if t is not None]
@@ -310,7 +329,7 @@ class FlowMILE(BaseAlgorithm):
             # Reuse the buffer's own collation so obs matches the training-time batch exactly.
             batched = buffer._convert_batch_to_tensors(buffer._batch_transitions(mini), device=self.device)
             obs = batched["obs"]
-            pool = self._sample_policy_actions(self.rollout_policy, obs, n_pool)  # [N, b, H, A]
+            pool = self._sample_policy_actions(pool_policy, obs, n_pool)  # [N, b, H, A]
             # -> [b, N, H, A] on CPU so the stored copies do not pin GPU memory.
             pool = pool.permute(1, 0, 2, 3).contiguous().to("cpu", torch.float32).numpy()
             for t, p in zip(mini, pool):

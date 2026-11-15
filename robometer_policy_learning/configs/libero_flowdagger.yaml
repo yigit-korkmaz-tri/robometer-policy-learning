@@ -1,0 +1,116 @@
+# FlowDAgger on LIBERO with a FROZEN pi0.5 (scripts/train_flowdagger.py).
+#
+# Each round: collect HITL rollouts (SpaceMouse / keyboard takeover) with the pi0.5 policy steered by
+# the current steering net -> invert the human corrections to pi0.5's initial-noise space -> behavior-
+# clone the steering net on those noises plus the noises that produced the autonomous chunks -> eval.
+# pi0.5 is never updated. Everything runs locally in one process (needs a display for teleop).
+#
+# Run with:  uv run python scripts/train_flowdagger.py --config-name libero_flowdagger \
+#                flowdagger.rounds=3 'flowdagger.eval_task_ids=[31,57]' 'flowdagger.collect_schedule="31;57"'
+defaults:
+  - _self_
+
+debug: false        # true => record labelled collection videos under <run dir>/debug_videos
+seed: 0
+
+env:
+  env_name: "libero_90"
+  max_episode_steps: 800        # collection and eval
+  image_keys: ["observation/image"]
+  init_state_index: "auto"
+  settle_steps: 10
+
+# Frozen pi0.5 policy that the steering net drives. Base checkpoint by default; a fine-tuned LoRA
+# checkpoint also works with pi0.config_name set (e.g. pi05_libero_hitl_lora).
+pi0:
+  checkpoint: "gs://openpi-assets/checkpoints/pi05_libero/"
+  config_name: null
+  # Actions executed from each chunk before replanning. pi05_libero's chunk is 10 long, so >= 10 means
+  # "the whole chunk"; FlowDAgger's per-chunk noise targets assume whole chunks are executed.
+  action_exec_len: 10
+
+hitl:
+  require_success: true            # keep only successful rollouts
+  keep_only_hitl_rollouts: false    # ... that contain >= 1 human intervention
+
+teleop:
+  device: "spacemouse"             # keyboard | spacemouse
+  takeover_key: "tab"
+  pos_sensitivity: 1.5
+  rot_sensitivity: 1.5
+  camera: "agentview"
+  wrist_camera: "robot0_eye_in_hand"
+  show_wrist: true
+  enable_render: true
+
+flowdagger:
+  # ---- rounds / tasks (same scheme as scripts/hitl_pi0_loop_seperated.sh) ----
+  rounds: 3
+  eval_task_ids: [31, 57, 63, 9, 59, 32, 48, 25]   # evaluated after every round (fixed)
+  collect_task_ids: [31, 57, 63, 9, 59, 32]        # null => eval_task_ids
+  # Per-round collection task lists, ';'-separated ("31 57;63 9;59 32"); the last list repeats.
+  # null / "" => every collect task, every round. Every id must be in collect_task_ids.
+  collect_schedule: "31 57; 63 9; 59 32"
+  collect_num_rollouts: 5          # KEPT rollouts per task per round (ESC ends the current task early)
+  eval_num_episodes: 50            # per eval task
+  # Save a rollout video of the first eval_video_first_n_episodes of each task, per eval:
+  # <run dir>/videos/<eval name>/task{T}_ep{k}.mp4 (eval name = eval_r1, eval_import, ...).
+  eval_record_video: true
+  eval_video_first_n_episodes: 1
+  skip_init_eval: true             # skip the eval of the starting policy (round start_round)
+  # Round-0 noise before any training: randn = plain pi0.5 (N(0, I)) | zeros = the untrained net's output.
+  init_noise: randn
+
+  # ---- steering network (paper's vlm_pi0 head) ----
+  hidden_dims: [256, 256, 256]
+  latent_dim: 256
+  noise_bound: 5.0                 # |w| bound with output_bound=tanh
+  output_bound: tanh               # tanh | linear
+  device: cuda                     # torch device for the steering net (cpu also works; it is tiny)
+
+  # ---- training ----
+  lr: 1.0e-4
+  batch_size: 256
+  train_steps_per_round: 2000
+  reinit_each_round: false         # true => train a fresh net on the aggregated data every round
+  # Fraction of each batch drawn from human-correction samples; the rest from autonomous-chunk samples
+  # (paper's dual buffer, 0.5). null => uniform over all samples. Falls back to uniform when either
+  # kind is missing.
+  human_ratio: 0.5
+  use_policy_samples: true         # false => train on inverted human corrections only
+
+  # ---- sample construction ----
+  # Drop the last autonomous chunk before each takeover from the BC targets: it is the behavior the
+  # human rejected.
+  drop_pre_takeover_chunk: true
+  human_window_stride: 10          # steps between consecutive human windows (10 = back-to-back chunks)
+  min_human_window: 1              # drop human windows shorter than this (they are padded to 10)
+
+  # ---- inversion (per-step fixed point of pi0.5's 10-step Euler sampler) ----
+  num_denoise_steps: 10            # must match pi0's sampler (openpi default: 10)
+  fp_iters: 5
+  inversion_batch_size: 8
+  # Human windows whose inverted noise re-integrates to an action chunk with normalized MSE above this
+  # (real rows, 7 action dims) are dropped.
+  inversion_mse_threshold: 1.0e-3
+
+  # ---- data reuse / resume ----
+  # Existing HITL rollout HDF5s (this script's round_*_rollouts.hdf5, or collect_hitl_libero_pi0.py
+  # outputs) folded into the training set before round start_round. Plain HITL files contribute only
+  # their human corrections (they carry no noise for the autonomous steps). With rounds == start_round
+  # this trains on them once and evals: a headless check of the pipeline.
+  import_hdf5s: []
+  import_task_id: -1               # task id recorded for imported samples (bookkeeping only)
+  # Resume an earlier run: its round_*_samples.h5 (round < start_round) are reloaded and
+  # steering_r{start_round-1}.pt is the starting net. Outputs go to the current run dir.
+  resume_dir: null
+  start_round: 0
+
+logging:
+  log_level: "INFO"
+  wandb: true
+  wandb_project: mile_dp
+  wandb_entity: ykorkmaz
+  wandb_name: "libero_flowdagger"
+  wandb_offline: false
+  wandb_log_dir_base: "logs/wandb"

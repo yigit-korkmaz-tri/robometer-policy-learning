@@ -68,6 +68,39 @@ Knobs: `training.num_offline_steps`, `training.num_rollouts` (online env steps),
 `online_algorithm.learning_starts`, `buffer.capacity`, `buffer.sample_ratio` (offline:online mix),
 `eval.eval_freq`, `eval.eval_num_episodes`.
 
+### Online SAC on robomimic
+`env.env_name=robomimic` rebuilds the robosuite env from the dataset's own metadata (task, robot,
+controller, control_freq, scene, camera size) via `setup_robomimic_env`, so the policy trains in the
+exact env the demos came from. The dataset only defines the env here; nothing is loaded into the
+buffer. Reward is robosuite's dense shaping.
+
+```bash
+# low-dim (proprio + object-state)
+uv run python scripts/train.py --config-name=robomimic_lowdim_sac \
+  env.h5_dataset_path=data/robomimic_datasets/robomimic_lowdim/lift/ph/low_dim_converted.hdf5
+# image (agentview via a finetuned IMPALA encoder + proprio)
+uv run python scripts/train.py --config-name=robomimic_image_sac \
+  env.h5_dataset_path=data/robomimic_datasets/robomimic_image/lift/ph/image_converted.hdf5
+```
+Keep `alg.offline_alg_name=iql` in these configs: critic construction is keyed off it, and bc/dp/flow
+build no critic.
+
+**Offline IQL → online SAC** (`robomimic_{lowdim,image}_iql_sac.yaml`). The demos and the online
+transitions share one buffer, so they must use the same reward. Converted robomimic files store sparse
+0/1 rewards, so relabel them once with the online env's dense reward (this replays the recorded sim
+states and writes `*_dense.hdf5`). `train.py` warns if you point it at a file that hasn't been relabeled.
+
+```bash
+uv run python scripts/relabel_robomimic_dense_reward.py \
+  -i data/robomimic_datasets/robomimic_lowdim/square/ph/low_dim_converted.hdf5
+uv run python scripts/train.py --config-name=robomimic_lowdim_iql_sac \
+  env.h5_dataset_path=data/robomimic_datasets/robomimic_lowdim/square/ph/low_dim_converted_dense.hdf5
+```
+SAC inherits IQL's actor, critic *and optimizers*, so `online_algorithm.actor_optimizer_lr` /
+`critic_optimizer_lr` are ignored after the handoff (IQL's lrs carry over). SAC's entropy coefficient
+starts fresh at 1.0 under `ent_coef: auto`; if the online phase immediately degrades the IQL policy,
+use a small fixed value instead (e.g. `online_algorithm.ent_coef=0.01`).
+
 ### With a learned reward model
 ```bash
 uv run python scripts/train.py ... reward_model=robometer \

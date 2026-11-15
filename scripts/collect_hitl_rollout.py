@@ -42,7 +42,9 @@ Controls (hitl.human_mode=real):
                 ESC = finish collection early (save & exit).
   'n' works for either device, including while the policy is still driving. Taking over keeps a
   closed gripper closed. Motion scale: ``teleop.pos_sensitivity`` / ``teleop.rot_sensitivity``
-  (default 1.0).
+  (default 1.0). ``teleop.step_fps=<N>`` slows every step (policy and human) to ~N steps/s on screen
+  so the human has time to take over and steer (null = full speed; only wall-clock pacing changes,
+  not the sim). ``teleop.cmd_deadzone`` ignores teleop commands smaller than it (sensor drift).
 """
 
 import os
@@ -430,6 +432,8 @@ def main(cfg: DictConfig):
         takeover_key=str(OmegaConf.select(cfg, "teleop.takeover_key", default="tab")),
         pos_sensitivity=float(OmegaConf.select(cfg, "teleop.pos_sensitivity", default=1.0)),
         rot_sensitivity=float(OmegaConf.select(cfg, "teleop.rot_sensitivity", default=1.0)),
+        step_fps=OmegaConf.select(cfg, "teleop.step_fps", default=None),
+        cmd_eps=float(OmegaConf.select(cfg, "teleop.cmd_deadzone", default=1e-6)),
         camera=OmegaConf.select(cfg, "teleop.camera", default="agentview"),
         wrist_camera=OmegaConf.select(cfg, "teleop.wrist_camera", default="robot0_eye_in_hand"),
         show_wrist=bool(OmegaConf.select(cfg, "teleop.show_wrist", default=True)),

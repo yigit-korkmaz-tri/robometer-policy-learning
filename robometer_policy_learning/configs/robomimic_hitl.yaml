@@ -43,10 +43,18 @@ hitl:
   use_epochs: false
   online_buffer_capacity: 500000
   clear_buffer_each_iter: false   # false = accumulate online data across iterations
+  # true => each iteration TRAINS from the initial (load_dir) weights on the aggregated data, with a
+  # fresh optimizer, instead of fine-tuning the previous iteration's policy. Collection still uses the
+  # previous iteration's trained policy (DAgger-style). Pair with use_epochs=true.
+  retrain_from_init: false
   # Fraction of each ONLINE batch drawn from the newest iteration's rollouts; the rest comes uniformly
   # from all earlier iterations (0.5 => newest weighs as much as all previous combined). null =>
   # uniform over the online buffer. Until a second iteration exists, every online sample is "newest".
   recent_round_ratio: 0.5
+  # Fraction of each ONLINE batch from human-correction (label-1) samples, the rest from autonomous
+  # (label-0) ones; recent_round_ratio applies within each label. A chunk's label is its first step's.
+  # null => label-agnostic (human share = intervention rate). Shifts MILE's probit class balance.
+  human_ratio: null
   # true => each buffer hands out every sample (or chunk) once per shuffled pass (epochs) instead of
   # independent random draws; a pass restarts when the buffer grows (after each collection phase).
   epoch_sampling: true
@@ -107,12 +115,19 @@ teleop:
   takeover_key: "tab"
   # Scale of keyboard / SpaceMouse deltas. 1.0 is robosuite's default; ~1.6 saturates a full
   # SpaceMouse push at the OSC_POSE action clip (±1), so higher values only reach max speed sooner.
-  pos_sensitivity: 1.5            # translation
-  rot_sensitivity: 1.5            # rotation
+  pos_sensitivity: 1.0            # translation
+  rot_sensitivity: 2.0            # rotation
   camera: "agentview"
   wrist_camera: "robot0_eye_in_hand"
   show_wrist: true
   enable_render: true             # set false for headless simulated-human runs (no cv2 window)
+  # Wall-clock cap (steps/s) on every step (policy and human) while a human watches, to leave time
+  # to take over and steer. null = full speed. ~5-10 is comfortable. Pacing only; sim dynamics and
+  # stored actions are unaffected (unlike lowering pos/rot_sensitivity, which shrinks the actions).
+  step_fps: null
+  # Teleop deadzone: commands with a smaller pose-delta norm are ignored (sim stays paused), so a
+  # resting hand's sensor drift doesn't add near-zero steps. Action units; e.g. 0.05.
+  cmd_deadzone: 1.0e-6
 
 logging:
   wandb_project: mile_dp
@@ -123,7 +138,7 @@ logging:
   log_level: "INFO"
 
 eval:
-  eval_freq: 2000     # Evaluation frequency in steps
+  eval_freq: null     # Evaluation frequency in steps; null = once at the end of each iteration
   eval_num_episodes: 50  # Number of episodes for evaluation
   eval_num_envs: 10  # Parallel eval envs.
   eval_vectorization: sync  # sync | async

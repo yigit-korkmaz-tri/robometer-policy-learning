@@ -1,0 +1,121 @@
+# FlowDAgger on robomimic with a FROZEN Flow-Matching policy (scripts/train_flowdagger_robomimic.py).
+#
+# Like robomimic_hitl.yaml, this only carries the run-specific settings; env / training / model / policy
+# are read from load_dir/.hydra/config.yaml. load_dir must be a `flow` pretraining run (FlowMatchingActor).
+# Each iteration: collect HITL rollouts with the steered policy -> invert the human corrections to the
+# flow's initial-noise space -> BC the steering net on those noises plus the noises behind the autonomous
+# chunks -> eval. The FlowMatchingActor is never updated.
+defaults:
+  - _self_
+
+debug: false
+
+load_dir: checkpoints/square_low_dim/2026-06-22_15-58-08
+checkpoint: 10000
+
+hitl:
+  seed: 0
+  num_iterations: 10
+  rollouts_per_iter: 5            # KEPT rollouts per iteration
+  online_buffer_capacity: 500000  # per-iteration collection buffer
+  require_success: true           # keep only successful rollouts
+  keep_only_hitl_rollouts: true   # ... that contain >= 1 human intervention
+  # true => store only the human steps: no autonomous-chunk samples (same as flowdagger.use_policy_samples=false)
+  store_only_human: false
+  segment_by_intervention: false  # must stay false (it hides takeover boundaries)
+  # Train once on saved HITL HDF5(s) (collect_hitl_rollout.py or this script's iter_*_rollouts.hdf5; a path
+  # or a list) instead of collecting. Requires num_iterations=1; no expert / teleop is used. Autonomous
+  # chunks count only if the file has their noise and was collected with this load_dir/checkpoint.
+  precollected_hitl_dataset: null
+  # Offline anchors (round -1), as in train_hitl.py:
+  #   null        => none
+  #   pretraining => invert every chunk of the pretraining demos (env.h5_dataset_path)
+  #   warmup      => invert every chunk of hitl.warmup_dataset_path (all steps, whatever their label)
+  #   self        => self_num_rollouts successful autonomous rollouts of the initial policy, with their noise
+  offline_mode: null
+  warmup_dataset_path: null
+  self_num_rollouts: 10
+  offline_sample_ratio: null      # fraction of each batch from the anchors; null = their share of all samples
+  # Intervention source, as in robomimic_hitl.yaml: real | simulated | toggle
+  human_mode: simulated
+  expert_load_dir: checkpoints/square_low_dim/2026-06-22_15-58-08
+  expert_checkpoint: best
+  # flow_mile* criteria score the steered actor like any FlowMatchingActor (deterministic once trained).
+  intervention_criteria: flow_mile
+  criteria_intervention_hold: 10
+  sim_execution_horizon: null
+  criteria_window: 10
+  criteria_intervention_cost: 0.0
+  criteria_num_samples: 8
+  criteria_score_mc_samples: 1
+  criteria_probit_scale: 1.0
+
+teleop:
+  device: "spacemouse"            # keyboard | spacemouse
+  takeover_key: "tab"
+  pos_sensitivity: 1.0
+  rot_sensitivity: 2.0
+  camera: "agentview"
+  wrist_camera: "robot0_eye_in_hand"
+  show_wrist: true
+  enable_render: true
+  step_fps: null
+  # Teleop deadzone: commands with a smaller pose-delta norm are ignored (sim stays paused), so a
+  # resting hand's sensor drift doesn't add near-zero steps. Action units; e.g. 0.05.
+  cmd_deadzone: 1.0e-6
+
+flowdagger:
+  # Noise before the first training: randn = the pretrained policy itself (N(0, I)) | zeros = the noise mode
+  init_noise: randn
+
+  # ---- steering net: frozen encode_obs feature -> LN-tanh bottleneck -> MLP -> [H, A] noise ----
+  hidden_dims: [256, 256, 256]
+  latent_dim: 256
+  noise_bound: 5.0                # |w| bound with output_bound=tanh
+  output_bound: tanh              # tanh | linear
+
+  # ---- training (all iterations' samples are kept) ----
+  lr: 1.0e-4
+  batch_size: 256
+  train_steps_per_iter: 2000
+  use_epochs: false               # true => train_steps_per_iter counts epochs over the aggregated samples
+  # true => each pool (offline / human / policy, and newest / older with recent_round_ratio) is drawn in
+  # shuffled passes, every sample once per pass, instead of i.i.d. with replacement. Pools still mix at
+  # the ratios below, so a small pool cycles faster. Passes restart each iteration (as hitl.epoch_sampling).
+  epoch_sampling: false
+  reinit_each_iter: false         # true => fresh steering net every iteration
+  # Fraction of each batch from human-correction samples, the rest from autonomous chunks (the paper's
+  # dual buffer). null => uniform over all samples. Uniform when either kind is missing.
+  human_ratio: 0.5
+  # Within each kind, fraction from the newest iteration (null => uniform over iterations).
+  recent_round_ratio: 0.5
+  use_policy_samples: true        # false => train on inverted human corrections only
+
+  # ---- sample construction ----
+  drop_pre_takeover_chunk: true   # drop the autonomous chunk the human took over from
+  # Steps between consecutive human windows (each window = the next H human steps). 1 = a window at every
+  # human step (cheap on robomimic); H = back-to-back chunks as on LIBERO.
+  human_window_stride: 1
+  min_human_window: 1             # shorter windows (end of a takeover) are padded by repeating the last action
+  offline_window_stride: 1        # human_window_stride for inverted offline demos (pretraining / warmup)
+
+  # ---- inversion of the Euler sampler (actor.num_inference_steps steps) ----
+  fp_iters: 5
+  # Human windows whose inverted noise re-integrates to the chunk with normalized-action MSE above this
+  # are dropped. null keeps all.
+  inversion_mse_threshold: 1.0e-3
+
+logging:
+  wandb_project: mile_dp
+  wandb_entity: tri
+  wandb_offline: false
+  wandb_log_dir_base: logs/wandb
+  wandb_name: "flowdagger_robomimic"
+  log_level: "INFO"
+
+eval:
+  eval_num_episodes: 50
+  eval_num_envs: 10
+  eval_vectorization: sync        # sync | async
+  eval_record_video: true
+  eval_on_first_step: true        # eval the pretrained policy (init_noise) before any training

@@ -419,13 +419,16 @@ def build_actor_critic_models(
             else:
                 v_net = TransformerCritic(v_net_config)
 
-            critic = critic.to(device)
-            v_net = v_net.to(device)
-
-            logger.info(f"Critic: {critic.__class__.__name__}")
-            rprint(critic)
-            logger.info(f"V-Net: {v_net.__class__.__name__}")
-            rprint(v_net)
+    # Move critic / v_net for BOTH the MLP and chunked branches: SAC's critic ensemble deepcopies
+    # `critic` as-is, so a CPU critic next to a CUDA actor fails at the first update.
+    if critic is not None:
+        critic = critic.to(device)
+        logger.info(f"Critic: {critic.__class__.__name__}")
+        rprint(critic)
+    if v_net is not None:
+        v_net = v_net.to(device)
+        logger.info(f"V-Net: {v_net.__class__.__name__}")
+        rprint(v_net)
 
     actor = actor.to(device)
 

@@ -34,6 +34,9 @@ reference_relative_score: true        # use loss_0 - loss_theta instead of -loss
 # current rollout policy (which has drifted toward past human corrections). Online buffer only.
 use_stored_rollout_samples: true     # true => use stored collection-time samples for the probit baseline
 stored_rollout_pool_size: 50          # pool N stored per state; draw monte_carlo_samples of them each step
+# true => rollout_policy = initial policy pi_0 for the whole run (reference score, anchor target, fresh
+# fallback); pools still come from each round's collection policy. Needs use_stored_rollout_samples.
+fixed_initial_rollout_policy: false
 
 # Regularizers (fine-tuning stability against the frozen rollout velocity field)
 proximal_loss_weight: 0.0                # 0 disables the proximal loss

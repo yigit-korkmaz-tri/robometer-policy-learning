@@ -1,5 +1,6 @@
 """Probability distributions."""
 
+import inspect
 from abc import ABC, abstractmethod
 from typing import Optional, TypeVar, Union
 
@@ -86,7 +87,15 @@ class Distribution(ABC):
         """
         if deterministic:
             return self.mode()
-        return self.sample()
+        if "num_samples" not in inspect.signature(self.sample).parameters:
+            return self.sample()  # e.g. StateDependentNoiseDistribution: no sample dim
+        # sample() keeps a leading (num_samples,) dim for multi-draw callers (MILE's Monte-Carlo
+        # estimates); a single draw must drop it, else act() returns (1, B, A) and the env rejects it,
+        # and log_prob_from_params (SAC's actor/entropy loss) yields (1, B) log-probs.
+        actions = self.sample(num_samples=1).squeeze(0)
+        if getattr(self, "gaussian_actions", None) is not None:
+            self.gaussian_actions = self.gaussian_actions.squeeze(0)
+        return actions
 
     @abstractmethod
     def actions_from_params(self, *args, **kwargs) -> th.Tensor:

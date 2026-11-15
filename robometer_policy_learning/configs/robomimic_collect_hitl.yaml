@@ -59,6 +59,13 @@ teleop:
   wrist_camera: "robot0_eye_in_hand"
   show_wrist: true
   enable_render: true             # set false for headless real-teleop runs (simulated forces False)
+  # Wall-clock cap (steps/s) on every step (policy and human) while a human watches, to leave time
+  # to take over and steer. null = full speed. ~5-10 is comfortable. Pacing only; sim dynamics and
+  # stored actions are unaffected (unlike lowering pos/rot_sensitivity, which shrinks the actions).
+  step_fps: null
+  # Teleop deadzone: commands with a smaller pose-delta norm are ignored (sim stays paused), so a
+  # resting hand's sensor drift doesn't add near-zero steps. Action units; e.g. 0.05.
+  cmd_deadzone: 1.0e-6
 
 logging:
   log_level: "INFO"
