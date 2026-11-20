@@ -377,6 +377,8 @@ def main(cfg: DictConfig):
             },
             logger=wandb_logger,
             eval_on_first_step=cfg.eval.eval_on_first_step,
+            save_dir=save_dir,
+            save_interval=cfg.training.save_interval,
         )
 
         rprint(f"Starting training for {cfg.training.num_rollouts} rollouts...")

@@ -24,14 +24,18 @@ def polyak_update(params, target_params, tau):
                 tp.data.copy_(p.data)
             return
 
-        # General Polyak averaging
+        # General Polyak averaging. Batched with _foreach ops: the per-tensor loop launched two
+        # kernels per parameter and was a large share of SAC's per-step time with 5-critic ensembles.
+        sources, targets = [], []
         for p, tp in zip(params, target_params):
             if tp.data.data_ptr() == p.data.data_ptr():
                 # Shared storage; fallback to direct copy for safety
                 tp.data.copy_(p.data)
             else:
-                tp.data.mul_(1.0 - tau)
-                tp.data.add_(p.data, alpha=tau)
+                sources.append(p.data)
+                targets.append(tp.data)
+        if targets:
+            torch._foreach_lerp_(targets, sources, tau)
 
 
 class CriticEnsemble(nn.Module):

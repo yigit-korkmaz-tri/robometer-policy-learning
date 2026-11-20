@@ -26,3 +26,6 @@ critic_optimizer_eps: 1.0e-8
 critic_optimizer_weight_decay: 1.0e-6
 
 ent_coef_lr: 3e-4
+
+# TD3+BC-style regularizer on demo rows of a mixed RLPD batch (0 = off; 0.4 <=> TD3+BC alpha 2.5)
+bc_coef: 0.0

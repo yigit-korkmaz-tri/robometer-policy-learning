@@ -859,6 +859,7 @@ def main(cfg: DictConfig):
             "over the data. Consider hitl.use_epochs=true."
         )
     save_interval = int(OmegaConf.select(cfg, "hitl.save_interval", default=1))
+    sync_online_to_ema = bool(OmegaConf.select(cfg, "hitl.sync_online_to_ema", default=False))
 
     best_success_rate = -1.0       # global best across all iterations  -> save_dir/best
     iter_best_success_rate = -1.0  # best within the current iteration  -> save_dir/best_iter{it}
@@ -1022,6 +1023,13 @@ def main(cfg: DictConfig):
             logger.info(f"Online buffer size after collection: {len(online_buffer)}")
        
             # --- 2) Train (rollout_policy = frozen snapshot of the data-collection policy, for MILE) ---
+            # sync_online_to_ema: this round's data was collected by the EMA (deployment) actor, but
+            # training would resume from the online weights, which run ~1/(1-ema_decay) steps ahead.
+            # Copy EMA -> online so online, EMA and the rollout snapshot below all coincide at the
+            # start of every round (ell = 0, anchor = 0), as in a single-round start.
+            if sync_online_to_ema and it > 0 and getattr(algo, "ema", None) is not None:
+                algo.online_actor.load_state_dict(algo.actor.state_dict())
+                logger.info(f"sync_online_to_ema: online actor reset to the EMA weights for iteration {it + 1}.")
             if needs_rollout_policy:
                 # The policy that just collected this round's data. Normally it becomes the frozen
                 # rollout_policy; with fixed_initial_rollout_policy, rollout_policy stays pi_0 and this

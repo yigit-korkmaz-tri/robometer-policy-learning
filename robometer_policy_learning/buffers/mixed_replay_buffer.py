@@ -286,7 +286,19 @@ class MixedReplayBuffer(BaseReplayBuffer):
                         )
                         return self._fix_dtypes(batch_1) if batch_1 else {}
 
-        return self._combine_batches(batch_1, batch_2)
+        combined = self._combine_batches(batch_1, batch_2)
+        # Tag rows drawn from buffer_1 (the offline/demo buffer in RLPD) so algorithms can apply
+        # demo-only losses, e.g. SAC's bc_coef actor regularizer. _combine_batches puts them first.
+        n_1 = len(batch_1.get("reward", []))
+        reward = combined.get("reward")
+        if reward is not None and n_1 > 0:
+            import torch
+
+            mask = np.arange(len(reward)) < n_1
+            combined["from_buffer_1"] = (
+                torch.as_tensor(mask, device=reward.device) if isinstance(reward, torch.Tensor) else mask
+            )
+        return combined
 
     def _can_sample_chunks(self, buffer, chunk_size: int, num_chunks: int) -> bool:
         """

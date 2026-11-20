@@ -132,6 +132,13 @@ class SuccessBonusTransform(TransitionTransform):
         Returns:
             Modified transition with success bonus
         """
+        # Batched (dict-of-lists) input from apply_transforms_batched: skips the per-sample
+        # unbatch -> transform -> re-batch fallback, which dominated SAC's sampling time.
+        if isinstance(transition, dict):
+            out = dict(transition)
+            out["reward"] = [r + self.bonus_value if d else r for r, d in zip(transition["reward"], transition["done"], strict=True)]
+            return out
+
         # Add bonus to successful episodes (done=True)
         if transition.done:
             new_reward = transition.reward + self.bonus_value
@@ -145,8 +152,7 @@ class SuccessBonusTransform(TransitionTransform):
         # Create new transition with modified reward using replace helper
         return transition.replace(reward=new_reward)
 
-    # This transform can be applied in batch by falling back to per-transition
-    supports_batch = False
+    supports_batch = True
 
     def __repr__(self):
         return f"SuccessBonusTransform(bonus_value={self.bonus_value}, debug={self.debug})"

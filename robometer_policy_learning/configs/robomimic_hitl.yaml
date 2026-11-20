@@ -59,6 +59,9 @@ hitl:
   # independent random draws; a pass restarts when the buffer grows (after each collection phase).
   epoch_sampling: true
   save_interval: 1                # save a checkpoint every N HITL iterations
+  # true => at the start of each round after the first, copy the EMA (deployment / data-collection)
+  # weights into the online actor, so online, EMA and the rollout snapshot coincide (as in round 1).
+  sync_online_to_ema: false
   store_only_human: false         # false = store all steps (MILE); true = store only corrections (HG-DAgger)
   # [MILE] split each trajectory into contiguous same-label segments (separate episodes) so chunked
   # sampling yields label-homogeneous chunks (no trailing-policy dilution) while keeping both classes.

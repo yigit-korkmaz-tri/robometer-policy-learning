@@ -151,6 +151,7 @@ class SAC(BaseAlgorithm):
         t_total_start = time.perf_counter()
         ent_coef_losses, ent_coefs = [], []
         actor_losses, critic_losses = [], []
+        bc_losses = []
         actor_log_pis = []
         min_qf_pis = []
         q_values_list = []
@@ -442,6 +443,19 @@ class SAC(BaseAlgorithm):
                     actor_loss = (ent_coef.float() * log_prob - min_qf_pi).mean()
                 else:
                     actor_loss = (-min_qf_pi).mean()
+            bc_coef = float(getattr(self.config, "bc_coef", 0.0) or 0.0)
+            demo_rows = batch.get("from_buffer_1")
+            if bc_coef > 0 and demo_rows is not None:
+                demo_rows = torch.as_tensor(demo_rows, device=mean_actions.device)[
+                    torch.as_tensor(actor_idx, device=mean_actions.device)
+                ].bool()
+                if demo_rows.any():
+                    pi_det = torch.tanh(mean_actions.float()).reshape(mean_actions.shape[0], -1)
+                    demo_act = self._slice_batch_data(actions, actor_idx).float().reshape(pi_det.shape[0], -1)
+                    bc_mse = ((pi_det - demo_act) ** 2).mean(dim=-1)[demo_rows].mean()
+                    q_scale = min_qf_pi.abs().mean().detach()
+                    actor_loss = actor_loss + bc_coef * q_scale * bc_mse
+                    bc_losses.append(bc_mse.item())
             min_qf_pis.append(min_qf_pi.mean().item())
             actor_losses.append(actor_loss.item())
 
@@ -460,6 +474,7 @@ class SAC(BaseAlgorithm):
         metrics_dict = {
             "ent_coef": np.mean(ent_coefs),
             "actor_loss": np.mean(actor_losses),
+            "actor_bc_mse": np.mean(bc_losses) if bc_losses else 0.0,
             "critic_loss": np.mean(critic_losses),
             "q_values_mean": np.mean(q_values_list),
             "target_q_mean": np.mean(q_next_values_list),

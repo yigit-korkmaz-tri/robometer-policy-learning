@@ -165,8 +165,11 @@ class RobosuiteObsWrapper(gym.Wrapper):
         info["sparse_reward"] = float(success)
         info["language_instruction"] = self.language_instruction
 
-        if self.terminate_on_success and success:
-            terminated = True
+        # robosuite's own `done` only ever signals the horizon, i.e. a time-limit truncation, never a
+        # terminal state. Passing it through as `terminated` stops the critic from bootstrapping at
+        # timeouts (and hands timeouts the success bonus), so re-label it as a truncation.
+        truncated = bool(truncated or terminated)
+        terminated = bool(self.terminate_on_success and success)
 
         return self._format_obs(raw_obs), np.float64(reward), terminated, truncated, info
 

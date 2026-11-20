@@ -36,6 +36,10 @@ class SACConfig(BaseAlgorithmConfig):
     n_critics_to_sample: int = 2
     num_critics: int = 2  # Number of critics in the ensemble
     critic_reduction: str = "min"  # "mean" or "min"
+    # TD3+BC-style actor regularizer on demo rows of a mixed (RLPD) batch:
+    #   actor_loss += bc_coef * mean|Q| * ||tanh(mu) - a_demo||^2   (bc_coef=0.4 <=> TD3+BC alpha=2.5)
+    # Needs MixedReplayBuffer's "from_buffer_1" row mask; 0 disables.
+    bc_coef: float = 0.0
     num_critic_updates_per_actor_update: int = 4
     num_updates_per_train_step: int = 1
     train_critic_with_entropy: bool = False

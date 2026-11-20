@@ -50,6 +50,15 @@ class RolloutWorker:
 
         self.total_episodes = 0
 
+        # Gymnasium vector envs default to NEXT_STEP autoreset: the step after an env finishes ignores
+        # the action and only returns the reset obs (reward 0, not done). Storing that step would add a
+        # fake "final obs -> reset obs" transition per episode, so we track which envs are mid-reset.
+        autoreset_mode = getattr(self.env, "metadata", {}).get("autoreset_mode", gym.vector.AutoresetMode.NEXT_STEP)
+        self._skip_autoreset_steps = isinstance(self.env, gym.vector.VectorEnv) and (
+            autoreset_mode == gym.vector.AutoresetMode.NEXT_STEP
+        )
+        self._prev_done = np.zeros(self.num_envs, dtype=bool)
+
     def run(self, can_train=True) -> Dict[str, float]:
         """Main rollout loop."""
         # Reset for new rollout
@@ -62,6 +71,7 @@ class RolloutWorker:
             if self.recent_obs is None:
                 obs, _ = self.env.reset()
                 self.actor_state = self.get_initial_actor_state()
+                self._prev_done[:] = False
             else:
                 obs = self.recent_obs
 
@@ -101,6 +111,8 @@ class RolloutWorker:
             for i in range(self.num_envs):
                 if not self.should_collect_from_env(i):
                     continue
+                if self._skip_autoreset_steps and self._prev_done[i]:
+                    continue
 
                 # Extract data for this environment
                 obs_i = self.extract_env_data(obs, i)
@@ -116,7 +128,7 @@ class RolloutWorker:
                     if isinstance(infos, list) and i < len(infos):
                         info_i = infos[i] if infos[i] is not None else {}
                     elif isinstance(infos, dict):
-                        info_i = infos  # Single info dict for all envs
+                        info_i = self._info_for_env(infos, i)
 
                 # Extract success info (if episode is done/truncated)
                 success_info = {}
@@ -157,6 +169,8 @@ class RolloutWorker:
                     self.reset_actor_state_for_env(i)
                     num_episodes += 1
                     self.total_episodes += 1
+            if self._skip_autoreset_steps:
+                self._prev_done = np.logical_or(np.asarray(dones), np.asarray(truncateds)).reshape(-1)
             self.recent_obs = next_obs
 
         return self.episode_tracker.get_metrics()
@@ -175,6 +189,26 @@ class RolloutWorker:
             return num_steps < self.num_rollouts
         else:  # episode
             return num_episodes < self.num_rollouts
+
+    def _info_for_env(self, infos: Dict[str, Any], env_idx: int) -> Dict[str, Any]:
+        """Index one env's entries out of a vector env's dict-of-arrays info.
+
+        Gymnasium vector envs return ``{key: per-env array, "_key": validity mask}`` rather than a list
+        of dicts; passing the whole dict on made per-env flags like ``success`` arrays, which breaks
+        truthiness checks once ``num_envs > 1``.
+        """
+        info_i = {}
+        for key, value in infos.items():
+            if key.startswith("_"):
+                continue
+            mask = infos.get(f"_{key}")
+            if mask is not None and not mask[env_idx]:
+                continue
+            try:
+                info_i[key] = value[env_idx]
+            except (TypeError, IndexError, KeyError):
+                info_i[key] = value
+        return info_i
 
     def should_collect_from_env(self, env_idx: int) -> bool:
         """Check if we should collect data from this environment."""
