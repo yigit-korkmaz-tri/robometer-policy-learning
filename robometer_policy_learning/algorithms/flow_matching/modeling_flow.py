@@ -251,6 +251,10 @@ class FlowMatchingActor(BaseActor):
         device = global_cond.device
 
         x = torch.randn(batch_size, self.horizon, self.action_dim, device=device)
+        # Opt-in (set only for the duration of one call by hitl_utils.NoiseRecordingHitlWorker): keep the
+        # initial noise so a HITL dataset can store the x0 behind every executed chunk (FlowDAgger needs it).
+        if getattr(self, "_record_noise", False):
+            self._recorded_noise = x.detach().clone()
         dt = 1.0 / steps
         for i in range(steps):
             t = i * dt

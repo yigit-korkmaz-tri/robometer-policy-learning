@@ -751,9 +751,10 @@ def relabel(buffer, label: int):
             t.info["intervention"] = int(label)
 
 
-def attach_recorded_noise(path: str, buffer) -> int:
-    """Copy each demo's ``noise`` / ``chunk_id`` (files written by train_flowdagger_robomimic.py) onto the
-    transitions ``load_precollected_hitl`` loaded from it (``episode_id`` = demo name, step = index).
+def attach_recorded_noise(path: str, buffer, episode_prefix: str = "") -> int:
+    """Copy each demo's ``noise`` / ``chunk_id`` (files written by train_flowdagger_robomimic.py, or round 0
+    of train_hitl.py's ``hitl.save_round_datasets``) onto the transitions ``load_precollected_hitl`` loaded
+    from it (``episode_id`` = ``episode_prefix`` + demo name, step = index); pass the same prefix.
 
     Returns the number of demos that carried noise; the others yield human samples only.
     """
@@ -761,10 +762,10 @@ def attach_recorded_noise(path: str, buffer) -> int:
     n_demos = 0
     with h5py.File(path, "r") as f:
         for demo, g in f["data"].items():
-            if "noise" not in g or "chunk_id" not in g or demo not in by_ep:
+            if "noise" not in g or "chunk_id" not in g or f"{episode_prefix}{demo}" not in by_ep:
                 continue
             noise, chunk_id = np.asarray(g["noise"], np.float32), np.asarray(g["chunk_id"], np.int64)
-            for t in by_ep[demo]:
+            for t in by_ep[f"{episode_prefix}{demo}"]:
                 k = int(t.step_in_episode)
                 t.info["noise"], t.info["chunk_id"] = noise[k], int(chunk_id[k])
             n_demos += 1

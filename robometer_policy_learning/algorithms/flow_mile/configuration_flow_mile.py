@@ -70,6 +70,19 @@ class FlowMILEConfig(BaseAlgorithmConfig):
     # baseline E_{a0~pi0} ell(a0,s) is replaced by ell(a_logged, s) on non-intervention (label-0)
     # transitions (the analogue of condition_intervention_on_action for the robot term).
     condition_nonintervention_on_robot: bool = False
+    # Source of the action samples `a` in the non-intervention (label-0) marginal
+    #     p(nu=1 | s, a_r) = E_a Phi(beta * (ell(a, s) - w * ell(a_r, s)) - c):
+    #   "training" -> a ~ pi_theta, the policy being trained as the model of the human (MILE: the human's
+    #                 own, unobserved preferred action);
+    #   "rollout"  -> a ~ the stored collection-time pool at s, i.e. other actions the robot that
+    #                 produced a_r could have taken. Pushing p -> 0 then reads "the human preferred the
+    #                 accepted robot action over its sibling robot actions" (margin ~ c / beta), a
+    #                 relative preference rather than BC. Label-1 rows are unchanged. Requires
+    #                 condition_nonintervention_on_robot=True (else the gap compares rollout samples
+    #                 with a rollout-sample baseline and is zero-mean whatever theta is) and
+    #                 use_stored_rollout_samples=True (the samples must come from the policy that
+    #                 produced a_r, which fresh rollout_policy samples are not across rounds).
+    nonintervention_marginal: str = "training"
 
     # ----- Flow-matching log-prob proxy (flow-matching loss) -----
     # Flow-matching samples (t, x0) used to estimate the per-sample score ell(a, s).

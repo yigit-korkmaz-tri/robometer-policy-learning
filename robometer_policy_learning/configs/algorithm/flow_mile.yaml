@@ -24,6 +24,11 @@ monte_carlo_samples: 10                # K samples for the marginal probit MC es
 mc_num_inference_steps: 10             # number of Euler steps for the Monte-Carlo action sampling
 condition_intervention_on_action: true  # use the observed human action a_h on intervention steps
 condition_nonintervention_on_robot: true  # baseline = logged robot action's score on label-0 steps (instead of the sampled E_{a0~pi0} baseline)
+# Samples for the label-0 marginal E_a Phi(beta(ell(a,s) - w ell(a_robot,s)) - c): "training" (a ~ the
+# policy being trained, standard MILE) | "rollout" (a ~ the stored pool of the policy that produced
+# a_robot: "the accepted robot action beats its sibling robot actions"). "rollout" requires
+# condition_nonintervention_on_robot=true and use_stored_rollout_samples=true.
+nonintervention_marginal: training
 
 # Flow-MILE specific (flow-matching-loss log-prob proxy)
 score_monte_carlo_samples: 1           # flow-matching (t, x0) samples used to estimate ell(a, s)
@@ -53,7 +58,7 @@ score_gap_clip: 5.0                    # clip standardized gap to +/- this (<= 0
 
 # EMA of weights (used for inference/eval)
 use_ema: true
-ema_decay: 0.999
+ema_decay: 0.99
 
 # Regularization / anti-overfitting (parity with BC/Flow)
 obs_noise_std: 0.0

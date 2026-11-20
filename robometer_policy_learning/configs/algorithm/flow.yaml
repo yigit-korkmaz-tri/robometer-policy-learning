@@ -42,7 +42,7 @@ obs_encoder_hidden_dims: []
 
 # Exponential moving average of weights (used for inference/eval)
 use_ema: true
-ema_decay: 0.995
+ema_decay: 0.99
 
 # Anti-overfitting regularization parameters (parity with BC / DP)
 obs_noise_std: 0.0

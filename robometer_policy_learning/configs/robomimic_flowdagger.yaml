@@ -15,6 +15,9 @@ checkpoint: 10000
 
 hitl:
   seed: 0
+  # Step cap of the collection env (also offline_mode='self' rollouts). null => the pretraining run's
+  # env.max_episode_steps.
+  max_episode_steps: null
   num_iterations: 10
   rollouts_per_iter: 5            # KEPT rollouts per iteration
   online_buffer_capacity: 500000  # per-iteration collection buffer
@@ -88,7 +91,7 @@ flowdagger:
   # dual buffer). null => uniform over all samples. Uniform when either kind is missing.
   human_ratio: 0.5
   # Within each kind, fraction from the newest iteration (null => uniform over iterations).
-  recent_round_ratio: 0.5
+  recent_round_ratio: null
   use_policy_samples: true        # false => train on inverted human corrections only
 
   # ---- sample construction ----
@@ -114,8 +117,10 @@ logging:
   log_level: "INFO"
 
 eval:
-  eval_num_episodes: 50
-  eval_num_envs: 10
+  # Step cap of the eval env (and its worker). null => the pretraining run's env.max_episode_steps.
+  max_episode_steps: null
+  eval_num_episodes: 100
+  eval_num_envs: 5
   eval_vectorization: sync        # sync | async
   eval_record_video: true
   eval_on_first_step: true        # eval the pretrained policy (init_noise) before any training

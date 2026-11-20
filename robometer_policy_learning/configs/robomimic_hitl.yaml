@@ -29,11 +29,20 @@ alg:
 #   HG-DAgger:       alg.offline_alg_name=bc               hitl.store_only_human=true   (store only corrections)
 hitl:
   seed: 0
+  # Step cap of the collection env (also offline_mode='self' rollouts). null => the pretraining run's
+  # env.max_episode_steps.
+  max_episode_steps: null
   keep_best: false
-  # Train on a precollected HITL dataset (HDF5 written by scripts/collect_hitl_rollout.py) instead
-  # of collecting interventions online. When set, requires num_iterations=1 and skips online
+  # Train on a precollected HITL dataset (HDF5 written by scripts/collect_hitl_rollout.py, or a LIST of
+  # files, e.g. the round_data/iter_*_rollouts.hdf5 written by save_round_datasets) instead of
+  # collecting interventions online. When set, requires num_iterations=1 and skips online
   # collection (env/expert/criterion/worker) entirely. null => collect online.
   precollected_hitl_dataset: null
+  # true => after each round's collection, write <output_dir>/round_data/iter_{it}_rollouts.hdf5 (that
+  # round's transitions, precollected_hitl_dataset-compatible) + iter_{it}_collection_actor.pt. Flow
+  # policies also store the initial noise behind every policy chunk (FlowDAgger reads round 0's), and
+  # flow_mile stores each step's rollout-sample pool from the round's collection policy (all labels).
+  save_round_datasets: false
   num_iterations: 10              # must be 1 when precollected_hitl_dataset is set
   rollouts_per_iter: 5            # intervention rollouts collected each iteration (online mode only)
   train_steps_per_iter: 1000  # fixed number of gradient steps over the training buffer each iteration
@@ -50,7 +59,7 @@ hitl:
   # Fraction of each ONLINE batch drawn from the newest iteration's rollouts; the rest comes uniformly
   # from all earlier iterations (0.5 => newest weighs as much as all previous combined). null =>
   # uniform over the online buffer. Until a second iteration exists, every online sample is "newest".
-  recent_round_ratio: 0.5
+  recent_round_ratio: null
   # Fraction of each ONLINE batch from human-correction (label-1) samples, the rest from autonomous
   # (label-0) ones; recent_round_ratio applies within each label. A chunk's label is its first step's.
   # null => label-agnostic (human share = intervention rate). Shifts MILE's probit class balance.
@@ -138,9 +147,11 @@ logging:
   log_level: "INFO"
 
 eval:
+  # Step cap of the eval env (and its worker). null => the pretraining run's env.max_episode_steps.
+  max_episode_steps: null
   eval_freq: null     # Evaluation frequency in steps; null = once at the end of each iteration
-  eval_num_episodes: 50  # Number of episodes for evaluation
-  eval_num_envs: 10  # Parallel eval envs.
+  eval_num_episodes: 100  # Number of episodes for evaluation
+  eval_num_envs: 5  # Parallel eval envs.
   eval_vectorization: sync  # sync | async
   eval_record_video: true  # Whether to record videos during evaluation
   eval_on_first_step: true  # If true, evaluate on the first step before any training

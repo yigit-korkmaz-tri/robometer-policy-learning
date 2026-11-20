@@ -49,10 +49,25 @@ grows, i.e. after each collection phase.
                      initial (pretrained) policy and use them as the offline anchor. No external demo
                      source is needed: the policy's own successes act as the anti-forgetting anchor.
 
+``hitl.save_round_datasets=true`` writes each round's collected transitions to
+``<output_dir>/round_data/iter_{it}_rollouts.hdf5`` (collect_hitl_rollout.py's schema, so they can be
+replayed below) and the actor that collected them to ``iter_{it}_collection_actor.pt``. On top of the
+schema, each demo stores, per step:
+  * flow policies: the initial noise behind every executed policy chunk. Round 0 (collected by the
+    unmodified ``load_dir`` policy) stores it as ``noise`` / ``chunk_id``, which
+    train_flowdagger_robomimic.py turns into policy samples; later rounds, collected by fine-tuned
+    weights, store ``policy_noise`` / ``policy_chunk_id`` (FlowDAgger uses only their human windows);
+  * flow_mile: ``rollout_samples [N, P, H, A]``, the baseline pool drawn from the round's collection
+    policy at EVERY step (both labels), whether or not this run trains with
+    ``offline_algorithm.use_stored_rollout_samples``.
+
 Alternatively, set ``hitl.precollected_hitl_dataset`` to a HITL HDF5 written by
-``scripts/collect_hitl_rollout.py`` to train on precollected interventions instead of collecting
-online. In that mode online collection is skipped (no expert/criterion/online-rollout worker) and
-``hitl.num_iterations`` must be 1 (a single train phase over the loaded buffer). It is still
+``scripts/collect_hitl_rollout.py`` (or a list of files, e.g. all of a run's ``round_data`` files) to
+train on precollected interventions instead of collecting online. Each file is loaded as one round in
+the order given (so ``hitl.recent_round_ratio`` treats the last as newest) and stored
+``rollout_samples`` pools are restored, so FlowMILE scores each state against the policy that collected
+it rather than the initial policy. In that mode online collection is skipped (no
+expert/criterion/online-rollout worker) and ``hitl.num_iterations`` must be 1 (a single train phase over the loaded buffer). It is still
 compatible with ``offline_mode='warmup'`` (which just loads its demo H5). ``hitl.store_only_human``
 filters the loaded dataset the same way it filters online collection (true => human steps only).
 
@@ -88,6 +103,12 @@ Usage (local machine with a display, keyboard teleop):
     uv run python scripts/train_hitl.py --config-name robomimic_image_hitl \
         load_dir=/path/to/run algorithm@offline_algorithm=bc alg.offline_alg_name=bc \
         hitl.store_only_human=true
+    # save every round's data, then retrain another setting on exactly that data:
+    uv run python scripts/train_hitl.py --config-name robomimic_hitl load_dir=/path/to/run \
+        hitl.save_round_datasets=true
+    uv run python scripts/train_hitl.py --config-name robomimic_hitl load_dir=/path/to/run \
+        hitl.num_iterations=1 \
+        'hitl.precollected_hitl_dataset=[<out>/round_data/iter_0_rollouts.hdf5,<out>/round_data/iter_1_rollouts.hdf5]'
 
 Teleop device is selected by ``teleop.device`` (``keyboard`` or ``spacemouse``); the SpaceMouse
 needs the ``hidapi`` package and a connected 3D mouse. The takeover toggle stays on the keyboard
@@ -121,8 +142,11 @@ if "MUJOCO_GL" not in os.environ:
 import cv2  # noqa: F401  (import order matters; keep above torch)
 
 import copy
+import sys
+from collections import OrderedDict
 from datetime import datetime
 
+import h5py
 import numpy as np
 import torch
 from hydra import main as hydra_main
@@ -149,6 +173,7 @@ from robometer_policy_learning.loggers.wandb_logger import WandbLogger
 from robometer_policy_learning.rollouts.evaluation_worker import BatchEvaluationWorker
 from robometer_policy_learning.utils.hitl_utils import (
     HitlRolloutWorker,
+    NoiseRecordingHitlWorker,
     analyze_intervention_segments,
     compute_iwr_weights,
     compute_sirius_weights,
@@ -158,6 +183,10 @@ from robometer_policy_learning.utils.hitl_utils import (
 )
 from robometer_policy_learning.utils.training_utils import save_checkpoint
 from robometer_policy_learning.utils.numpy_compat import allow_numpy2_rng_pickles
+
+# collect_hitl_rollout.py's HDF5 writer (the precollected-dataset schema) lives next to this script.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from collect_hitl_rollout import _read_source_env_args, _write_h5
 
 logger = get_logger()
 # Actors trained in the robometer (numpy 2) env pickle an RNG that numpy 1.26 can't rebuild.
@@ -185,6 +214,9 @@ MILE_STYLE_ALGS = {"mile", "diffusion_mile", "flow_mile"}
 LABEL_OFFLINE = 2
 # Robot (autonomous-policy) intervention label — same as the online policy label set by the worker.
 LABEL_ROBOT = 0
+# Per-transition info key of FlowMILE's collection-time baseline pool (FlowMILE.stored_rollout_key); also
+# the per-step dataset name in saved round datasets, restored from there in precollected mode.
+ROLLOUT_SAMPLES_KEY = "rollout_samples"
 
 
 def _load_pretrain_cfg(load_dir: str) -> DictConfig:
@@ -244,6 +276,14 @@ def _run_identity(path) -> str:
     return "/".join(parts[-2:]) if len(parts) >= 2 else (parts[-1] if parts else str(path))
 
 
+def _max_episode_steps(cfg: DictConfig, key: str) -> int:
+    """Episode step cap for the env configured at ``key`` (``hitl.max_episode_steps`` for collection,
+    ``eval.max_episode_steps`` for eval); null => the pretraining run's ``env.max_episode_steps``.
+    """
+    value = OmegaConf.select(cfg, key, default=None)
+    return int(cfg.env.max_episode_steps) if value is None else int(value)
+
+
 def _read_precollected_meta(path: str) -> dict:
     """Return the provenance metadata dict written under ``/meta`` by collect_hitl_rollout.py (or {})."""
     import json
@@ -257,6 +297,52 @@ def _read_precollected_meta(path: str) -> dict:
     except Exception as e:  # noqa: BLE001
         logger.warning(f"Could not read /meta from precollected dataset {path}: {e}")
     return {}
+
+
+class _TransitionList:
+    """Minimal buffer view (``get_all_transitions``) so ``_write_h5`` can write a subset of a buffer."""
+
+    def __init__(self, transitions):
+        self._transitions = list(transitions)
+
+    def get_all_transitions(self):
+        return self._transitions
+
+
+def _save_round_dataset(path, transitions, *, base_policy_noise: bool, meta: dict, **write_kwargs) -> dict:
+    """Write one round's transitions as a precollected HITL HDF5 (collect_hitl_rollout.py's schema).
+
+    On top of that schema, each demo gets these per-step datasets when every step carries them:
+      * the initial flow noise behind each executed policy chunk (zeros + chunk id -1 on human steps).
+        Stored as ``noise`` / ``chunk_id`` only when ``base_policy_noise`` (the round was collected by the
+        unmodified load_dir policy), which is the name train_flowdagger_robomimic.py reads. Later rounds
+        were collected by fine-tuned weights, through which alone their noise reproduces the actions, so
+        they get ``policy_noise`` / ``policy_chunk_id`` instead and FlowDAgger cannot mistake them for
+        base-policy noise (it keeps their human windows and drops their autonomous chunks);
+      * ``rollout_samples [N, P, H, A]``: FlowMILE's baseline pool, P chunks sampled from the round's
+        collection policy at each step's obs, in the policy's normalized action space.
+    """
+    stats = _write_h5(_TransitionList(transitions), path, meta_extra=meta, **write_kwargs)
+    # Same demo order as _write_h5: episodes in first-seen order, steps sorted within each.
+    episodes = OrderedDict()
+    for t in transitions:
+        episodes.setdefault(t.episode_id, []).append(t)
+    noise_key, chunk_key = ("noise", "chunk_id") if base_policy_noise else ("policy_noise", "policy_chunk_id")
+    n_noise = n_pool = 0
+    with h5py.File(path, "a") as f:
+        for i, trs in enumerate(episodes.values()):
+            infos = [t.info or {} for t in sorted(trs, key=lambda x: int(x.step_in_episode))]
+            g = f["data"][f"demo_{i}"]
+            if all("noise" in d and "chunk_id" in d for d in infos):
+                g.create_dataset(noise_key, data=np.stack([np.asarray(d["noise"], np.float32) for d in infos]),
+                                 compression="gzip")
+                g.create_dataset(chunk_key, data=np.asarray([int(d["chunk_id"]) for d in infos], np.int64))
+                n_noise += 1
+            if all(ROLLOUT_SAMPLES_KEY in d for d in infos):
+                pools = np.stack([np.asarray(d[ROLLOUT_SAMPLES_KEY], np.float32) for d in infos])
+                g.create_dataset(ROLLOUT_SAMPLES_KEY, data=pools, compression="gzip")
+                n_pool += 1
+    return {**stats, "demos_with_noise": n_noise, "demos_with_rollout_samples": n_pool}
 
 
 @hydra_main(version_base=None, config_path="../robometer_policy_learning/configs", config_name="config")
@@ -310,46 +396,52 @@ def main(cfg: DictConfig):
     # ---- Precollected HITL dataset: when set, train on a saved HITL HDF5 (collect_hitl_rollout.py)
     # instead of collecting interventions online. There is no online loop to iterate, so require
     # num_iterations == 1; the online collection (env/expert/criterion/worker) is skipped entirely. ----
-    precollected_hitl_dataset = OmegaConf.select(cfg, "hitl.precollected_hitl_dataset", default=None)
+    # A single path or a list (e.g. the per-round files written by hitl.save_round_datasets); kept as a
+    # list throughout, so an empty list means online collection.
+    _precollected_raw = OmegaConf.select(cfg, "hitl.precollected_hitl_dataset", default=None)
+    if isinstance(_precollected_raw, str):
+        _precollected_raw = [_precollected_raw]
+    precollected_hitl_dataset = [str(p) for p in (_precollected_raw or [])]
     num_iterations = int(OmegaConf.select(cfg, "hitl.num_iterations", default=10))
     if precollected_hitl_dataset:
-        if not os.path.exists(precollected_hitl_dataset):
-            raise FileNotFoundError(f"hitl.precollected_hitl_dataset not found: {precollected_hitl_dataset}")
         assert num_iterations == 1, (
             "hitl.precollected_hitl_dataset is set, so there is no online collection to iterate over; "
             f"set hitl.num_iterations=1 (got {num_iterations})."
         )
-        # Verify the dataset was collected with the SAME data-collection policy as this run's
-        # load_dir, so the policy we train/snapshot is the one that produced the interventions.
-        _meta = _read_precollected_meta(precollected_hitl_dataset)
-        _ds_load_dir = _meta.get("load_dir")
-        if _ds_load_dir is None:
-            raise ValueError(
-                f"Precollected dataset {precollected_hitl_dataset} has no 'load_dir' in its /meta; "
-                "cannot verify it was collected with the same policy as load_dir."
-            )
-        elif _run_identity(_ds_load_dir) != _run_identity(load_dir):
-            raise ValueError(
-                "Precollected HITL dataset was collected with a different policy than the configured "
-                f"load_dir:\n  dataset load_dir = {_ds_load_dir}\n  config  load_dir = {load_dir}\n"
-                "These must match so the trained/rollout policy is the one that produced the "
-                "interventions. Set load_dir to the dataset's collection run (or recollect the data)."
-            )
-        else:
-            # Same run: also require the same checkpoint step so the trained/rollout policy weights
-            # match the ones that produced the interventions (both null/latest is fine).
-            _ds_ckpt = _meta.get("checkpoint")
-            _cfg_ckpt = OmegaConf.select(cfg, "checkpoint", default=None)
-            if str(_ds_ckpt) != str(_cfg_ckpt):
+        for _path in precollected_hitl_dataset:
+            if not os.path.exists(_path):
+                raise FileNotFoundError(f"hitl.precollected_hitl_dataset not found: {_path}")
+            # Verify the dataset was collected with the SAME data-collection policy as this run's
+            # load_dir, so the policy we train/snapshot is the one that produced the interventions.
+            _meta = _read_precollected_meta(_path)
+            _ds_load_dir = _meta.get("load_dir")
+            if _ds_load_dir is None:
                 raise ValueError(
-                    "Precollected HITL dataset was collected with a different checkpoint than the "
-                    f"configured one:\n  dataset checkpoint = {_ds_ckpt}\n  config  checkpoint = {_cfg_ckpt}\n"
-                    "These must match (or both be null/latest) so the trained/rollout policy weights "
-                    "are the ones that produced the interventions. Set checkpoint to the dataset's "
-                    "collection step (or recollect the data)."
+                    f"Precollected dataset {_path} has no 'load_dir' in its /meta; "
+                    "cannot verify it was collected with the same policy as load_dir."
                 )
-            logger.info(f"Precollected dataset matches config load_dir={load_dir}, checkpoint={_cfg_ckpt}.")
-        logger.info(f"Precollected HITL dataset: {precollected_hitl_dataset} (online collection skipped).")
+            elif _run_identity(_ds_load_dir) != _run_identity(load_dir):
+                raise ValueError(
+                    "Precollected HITL dataset was collected with a different policy than the configured "
+                    f"load_dir:\n  dataset load_dir = {_ds_load_dir}\n  config  load_dir = {load_dir}\n"
+                    "These must match so the trained/rollout policy is the one that produced the "
+                    "interventions. Set load_dir to the dataset's collection run (or recollect the data)."
+                )
+            else:
+                # Same run: also require the same checkpoint step so the trained/rollout policy weights
+                # match the ones that produced the interventions (both null/latest is fine).
+                _ds_ckpt = _meta.get("checkpoint")
+                _cfg_ckpt = OmegaConf.select(cfg, "checkpoint", default=None)
+                if str(_ds_ckpt) != str(_cfg_ckpt):
+                    raise ValueError(
+                        "Precollected HITL dataset was collected with a different checkpoint than the "
+                        f"configured one:\n  dataset checkpoint = {_ds_ckpt}\n  config  checkpoint = {_cfg_ckpt}\n"
+                        "These must match (or both be null/latest) so the trained/rollout policy weights "
+                        "are the ones that produced the interventions. Set checkpoint to the dataset's "
+                        "collection step (or recollect the data)."
+                    )
+                logger.info(f"Precollected dataset matches config load_dir={load_dir}, checkpoint={_cfg_ckpt}.")
+        logger.info(f"Precollected HITL dataset(s): {precollected_hitl_dataset} (online collection skipped).")
 
     # ---- Pretrained actor (a deployable BaseActor pickled by Algorithm.save) ----
     ckpt_dir = _resolve_checkpoint_dir(load_dir, OmegaConf.select(cfg, "checkpoint", default=None))
@@ -379,7 +471,7 @@ def main(cfg: DictConfig):
         n_envs=1,
         device=device,
         seed=OmegaConf.select(cfg, "hitl.seed", default=0),
-        max_episode_steps=cfg.env.max_episode_steps+200,
+        max_episode_steps=_max_episode_steps(cfg, "hitl.max_episode_steps"),
         use_full_state=cfg.env.use_full_state,
         terminate_on_success=True,
         chunk_size=None,
@@ -423,6 +515,12 @@ def main(cfg: DictConfig):
     # When true, online collection keeps only successful rollouts that contain >= 1 human
     # intervention (discarding intervention-free successes); false keeps all successful rollouts.
     keep_only_hitl_rollouts = bool(OmegaConf.select(cfg, "hitl.keep_only_hitl_rollouts", default=False))
+    # Write each round's collected rollouts (+ flow noise, + FlowMILE baseline pools, + the collection
+    # actor) under <output_dir>/round_data/, so other settings / baselines can be trained on the same data.
+    save_round_datasets = bool(OmegaConf.select(cfg, "hitl.save_round_datasets", default=False))
+    if save_round_datasets and precollected_hitl_dataset:
+        logger.warning("hitl.save_round_datasets is ignored in precollected-dataset mode (nothing is collected).")
+        save_round_datasets = False
     if store_only_human and alg_name in MILE_STYLE_ALGS:
         raise ValueError(
             f"hitl.store_only_human=true is incompatible with alg.offline_alg_name='{alg_name}'. "
@@ -672,11 +770,28 @@ def main(cfg: DictConfig):
         # steps (HG-DAgger; contiguous human runs are re-segmented so chunked sampling stays valid),
         # false keeps every step incl. autonomous-policy ones (e.g. plain BC on all HITL data).
         keep_only_human = store_only_human
-        stats = load_precollected_hitl(
-            precollected_hitl_dataset, online_buffer, lowdim_stats, remove_obs_keys,
-            keep_only_human=keep_only_human,
-            segment_by_intervention=segment_by_intervention,
+        # One round per file (in the order given), so hitl.recent_round_ratio treats the LAST file as the
+        # newest round, as in online collection. Files with stored FlowMILE baseline pools restore them
+        # onto info[ROLLOUT_SAMPLES_KEY]; precompute_rollout_samples then skips those transitions instead
+        # of resampling them from the initial policy.
+        stats = {"transitions": 0, "episodes": 0, "human": 0}
+        for i_file, _path in enumerate(precollected_hitl_dataset):
+            online_buffer.start_round(i_file)
+            file_stats = load_precollected_hitl(
+                _path, online_buffer, lowdim_stats, remove_obs_keys,
+                keep_only_human=keep_only_human,
+                segment_by_intervention=segment_by_intervention,
+                episode_prefix=f"f{i_file}_",  # every file numbers its demos from demo_0
+                extra_info_keys=(ROLLOUT_SAMPLES_KEY,),
+            )
+            stats = {k: stats[k] + file_stats[k] for k in stats}
+            logger.info(f"  {_path}: {file_stats['transitions']} transitions, {file_stats['human']} human")
+        n_pooled = sum(
+            1 for t in online_buffer.get_all_transitions()
+            if t is not None and ROLLOUT_SAMPLES_KEY in (t.info or {})
         )
+        if n_pooled:
+            logger.info(f"Restored stored rollout-sample pools for {n_pooled}/{stats['transitions']} transitions.")
         if keep_only_human:
             logger.info(
                 f"store_only_human=true ({alg_name}): filtered precollected dataset to human-only "
@@ -762,7 +877,22 @@ def main(cfg: DictConfig):
             enable_render = False
         else:
             enable_render = cfg.teleop.enable_render
-        worker = HitlRolloutWorker(
+        # Saving round datasets from a flow policy: also record the initial noise behind every policy chunk.
+        worker_cls = HitlRolloutWorker
+        if save_round_datasets:
+            if isinstance(algo.actor, FlowMatchingActor):
+                worker_cls = NoiseRecordingHitlWorker
+            else:
+                logger.warning(
+                    f"hitl.save_round_datasets: {type(algo.actor).__name__} is not a FlowMatchingActor, so no "
+                    "flow noise is recorded (the saved datasets are not usable as FlowDAgger policy samples)."
+                )
+            if not hasattr(algo, "precompute_rollout_samples"):
+                logger.warning(
+                    f"hitl.save_round_datasets: alg '{alg_name}' has no rollout-sample pools, so the saved "
+                    f"datasets carry no '{ROLLOUT_SAMPLES_KEY}' (collect with flow_mile to get them)."
+                )
+        worker = worker_cls(
             env=env,
             actor=algo.actor,
             online_buffer=online_buffer,
@@ -824,7 +954,7 @@ def main(cfg: DictConfig):
         n_envs=eval_num_envs,
         device=device,
         seed=OmegaConf.select(cfg, "hitl.seed", default=0)+14,
-        max_episode_steps=cfg.env.max_episode_steps + 200,
+        max_episode_steps=_max_episode_steps(cfg, "eval.max_episode_steps"),
         use_full_state=cfg.env.use_full_state,
         terminate_on_success=True,
         chunk_size=chunk_size,
@@ -838,7 +968,7 @@ def main(cfg: DictConfig):
         record_video=cfg.eval.eval_record_video,
         logger=wandb_logger,
         lowdim_obs_stats=lowdim_stats,
-        max_episode_steps=int(cfg.env.max_episode_steps) + 200,
+        max_episode_steps=_max_episode_steps(cfg, "eval.max_episode_steps"),
     )
 
     # =====================================================================================
@@ -1035,12 +1165,67 @@ def main(cfg: DictConfig):
                 # intervention state is never scored against a later policy already trained to imitate
                 # its human action. Online buffer only (offline anchors fall back to fresh samples for
                 # their discarded probit rows). No-op with clear_buffer_each_iter=true (buffer is fresh).
-                if getattr(algo, "use_stored_rollout_samples", False) and hasattr(algo, "precompute_rollout_samples"):
+                # save_round_datasets also draws them (for every label) so they can be saved with the round,
+                # even when this run's training does not use them.
+                wants_pools = getattr(algo, "use_stored_rollout_samples", False) or save_round_datasets
+                if wants_pools and hasattr(algo, "precompute_rollout_samples"):
                     n_written = algo.precompute_rollout_samples(online_buffer, pool_policy=collection_policy)
                     logger.info(
                         f"FlowMILE: stored rollout samples for {n_written} new transitions "
                         f"(from iteration {it + 1}'s collection policy)."
                     )
+            # Save this round's data BEFORE any retrain_from_init reset: algo.actor is still the policy
+            # that collected it (the saved actor is what reproduces its recorded noise / pools).
+            if save_round_datasets and not any(
+                t is not None and str(t.episode_id).startswith(f"it{it}_") for t in online_buffer.get_all_transitions()
+            ):
+                logger.warning(f"hitl.save_round_datasets: iteration {it + 1} stored no transitions; nothing saved.")
+            elif save_round_datasets:
+                round_dir = os.path.join(output_dir, "round_data")
+                os.makedirs(round_dir, exist_ok=True)
+                # Every episode id the worker stores this iteration starts with f"it{it}_" (see rollout_episode
+                # calls above; the segment suffixes keep that prefix).
+                round_trs = [
+                    t for t in online_buffer.get_all_transitions()
+                    if t is not None and str(t.episode_id).startswith(f"it{it}_")
+                ]
+                actor_file = f"iter_{it}_collection_actor.pt"
+                torch.save(algo.actor, os.path.join(round_dir, actor_file))
+                pool_info = None
+                if hasattr(algo, "precompute_rollout_samples"):
+                    pool_info = {
+                        "pool_size": int(algo.stored_rollout_pool_size),
+                        "num_inference_steps": algo.mc_num_inference_steps,  # None => actor default
+                        "policy": "this round's collection policy",
+                        "action_space": "policy-normalized [-1, 1]",
+                    }
+                round_path = os.path.join(round_dir, f"iter_{it}_rollouts.hdf5")
+                round_stats = _save_round_dataset(
+                    round_path, round_trs,
+                    # Only iteration 0 is collected by the unmodified load_dir weights.
+                    base_policy_noise=(it == 0),
+                    lowdim_stats=lowdim_stats, action_min=action_min, action_max=action_max,
+                    env_args=_read_source_env_args(cfg.env.h5_dataset_path),
+                    meta={
+                        "created": datetime.now().isoformat(timespec="seconds"),
+                        "collector": "train_hitl.py", "iteration": it, "alg_name": alg_name,
+                        "load_dir": load_dir, "checkpoint": OmegaConf.select(cfg, "checkpoint", default=None),
+                        "collection_actor": actor_file, "noise_reproduces_base_policy": it == 0,
+                        "rollout_samples": pool_info,
+                        "human_mode": human_mode, "store_only_human": store_only_human,
+                        "keep_only_hitl_rollouts": keep_only_hitl_rollouts,
+                        "segment_by_intervention": segment_by_intervention,
+                        "n_action_steps": n_exec, "chunk_size": chunk_size, "obs_are_raw": True,
+                        "remove_obs_keys": list(remove_obs_keys),
+                        "intervention_labels": {"policy": LABEL_ROBOT, "human": 1},
+                    },
+                )
+                logger.info(
+                    f"Saved round {it + 1} dataset to {round_path}: {round_stats['num_demos']} demos, "
+                    f"{round_stats['total_transitions']} transitions "
+                    f"({round_stats['intervention_transitions']} human); noise on {round_stats['demos_with_noise']} "
+                    f"demos, rollout-sample pools on {round_stats['demos_with_rollout_samples']} demos."
+                )
             # retrain_from_init: reset only NOW, after collection (done with the previous iteration's
             # policy) and after the rollout-policy snapshot + stored pools above, which must reflect
             # that collection policy rather than the initial weights.

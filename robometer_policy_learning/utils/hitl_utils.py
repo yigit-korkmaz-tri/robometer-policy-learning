@@ -692,14 +692,18 @@ class HitlRolloutWorker:
         to force a replan (e.g. after an intervention).
         """
         if st["chunk"] is None or st["pos"] >= len(st["chunk"]) or st["pos"] >= self.n_action_steps:
-            with torch.inference_mode():
-                pred, _ = self.actor.act(obs_t, deterministic=True)
-            pred = pred.detach().cpu().numpy()
+            pred = self._act_chunk(obs_t).detach().cpu().numpy()
             st["chunk"] = pred.reshape(-1, self.action_dim) if pred.ndim == 3 else np.atleast_2d(pred)
             st["pos"] = 0
         a = st["chunk"][st["pos"]]
         st["pos"] += 1
         return a
+
+    def _act_chunk(self, obs_t) -> torch.Tensor:
+        """One fresh (env-space) rollout-policy prediction; the replan hook subclasses wrap."""
+        with torch.inference_mode():
+            pred, _ = self.actor.act(obs_t, deterministic=True)
+        return pred
 
     def _step_extras(self, label) -> Dict:
         """Extra per-step fields stored in each transition's info; subclasses add e.g. the chunk's noise."""
@@ -1106,6 +1110,45 @@ class HitlRolloutWorker:
         return steps, human_steps, stored, success
 
 
+class NoiseRecordingHitlWorker(HitlRolloutWorker):
+    """``HitlRolloutWorker`` for a FlowMatchingActor that tags every policy step with its chunk id and the
+    initial noise ``x0 [H, A]`` the flow integrated to produce that chunk.
+
+    Same ``info`` fields as FlowDAgger's worker (``chunk_id`` / ``noise``; human steps get ``chunk_id=-1``
+    and zero noise), so the saved round datasets can feed train_flowdagger_robomimic.py. The noise only
+    reproduces the actions through the exact weights that collected them (the round's collection policy).
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._chunk_id = -1
+        self._chunk_noise = None
+
+    def _act_chunk(self, obs_t) -> torch.Tensor:
+        actor = self.actor
+        actor._record_noise = True  # read by FlowMatchingActor.sample_actions for this one call
+        try:
+            pred = super()._act_chunk(obs_t)
+            noise = actor.__dict__.get("_recorded_noise")
+        finally:
+            # Never leave the flag / tensor on the actor: it is deep-copied and pickled into checkpoints.
+            actor.__dict__.pop("_record_noise", None)
+            actor.__dict__.pop("_recorded_noise", None)
+        if noise is None:
+            raise RuntimeError(
+                f"{type(actor).__name__}.act() did not record its initial noise; NoiseRecordingHitlWorker "
+                "needs a FlowMatchingActor (whose sample_actions honours _record_noise)."
+            )
+        self._chunk_id += 1
+        self._chunk_noise = noise[0].float().cpu().numpy()
+        return pred
+
+    def _step_extras(self, label) -> Dict:
+        if label == ROLLOUT_LABEL and self._chunk_noise is not None:
+            return {"chunk_id": self._chunk_id, "noise": self._chunk_noise}
+        return {"chunk_id": -1, "noise": np.zeros((self.actor.horizon, self.actor.action_dim), np.float32)}
+
+
 def analyze_intervention_segments(
     online_buffer,
     chunk_size: Optional[int] = None,
@@ -1347,7 +1390,14 @@ def compute_iwr_weights(online_buffer) -> Dict[str, Any]:
 
 
 def load_precollected_hitl(
-    path, online_buffer, lowdim_stats, remove_obs_keys, keep_only_human=False, segment_by_intervention=False
+    path,
+    online_buffer,
+    lowdim_stats,
+    remove_obs_keys,
+    keep_only_human=False,
+    segment_by_intervention=False,
+    episode_prefix: str = "",
+    extra_info_keys=(),
 ):
     """Load a precollected HITL HDF5 (written by ``scripts/collect_hitl_rollout.py``) into a buffer.
 
@@ -1370,6 +1420,11 @@ def load_precollected_hitl(
     label-homogeneous chunks (a chunk never crosses a 0↔1 boundary) while still retaining both classes
     for the probit. ``keep_only_human`` takes precedence if both are set. Segments shorter than the
     policy's ``chunk_size`` cannot form a chunk and are effectively dropped (both classes).
+
+    ``episode_prefix`` is prepended to every ``episode_id``; give each file a distinct one when loading
+    several files into one buffer, else their ``demo_i`` names collide and episodes merge. Each name in
+    ``extra_info_keys`` that a demo carries as a per-step dataset (e.g. ``rollout_samples`` written by
+    train_hitl.py's ``hitl.save_round_datasets``) is copied onto that step's ``info[name]``.
 
     Returns a dict with ``transitions`` / ``episodes`` / ``human`` counts.
     """
@@ -1394,6 +1449,7 @@ def load_precollected_hitl(
             rewards = np.asarray(g["rewards"], dtype=np.float32) if "rewards" in g else np.zeros(n, np.float32)
             dones = np.asarray(g["dones"], dtype=np.float32) if "dones" in g else np.zeros(n, np.float32)
             interv = np.asarray(g["intervention"]).astype(int) if "intervention" in g else np.zeros(n, dtype=int)
+            extras = {k: np.asarray(g[k]) for k in extra_info_keys if k in g}
 
             obs_grp = g["obs"]
             obs_keys = [k for k in obs_grp.keys() if k not in remove]
@@ -1411,6 +1467,14 @@ def load_precollected_hitl(
 
             obs_list = [_obs(t) for t in range(n)]
             n_interv_ep = int((interv == 1).sum())
+
+            def _info(t, label, n=n, n_interv_ep=n_interv_ep, extras=extras):
+                return {
+                    "intervention": label,
+                    "episode_len": n,
+                    "episode_num_interventions": n_interv_ep,
+                    **{k: v[t] for k, v in extras.items()},
+                }
 
             if keep_only_human:
                 # HG-DAgger: store only human-correction steps, segmenting contiguous human runs into
@@ -1436,13 +1500,9 @@ def load_precollected_hitl(
                         next_obs=next_obs,
                         done=float(bool(dones[t])),
                         truncated=0.0,
-                        episode_id=f"{demo}_h{seg}",
+                        episode_id=f"{episode_prefix}{demo}_h{seg}",
                         step_in_episode=seg_step,
-                        info={
-                            "intervention": INTERVENTION_LABEL,
-                            "episode_len": n,
-                            "episode_num_interventions": n_interv_ep,
-                        },
+                        info=_info(t, INTERVENTION_LABEL),
                     )
                     seg_step += 1
                     prev_human = True
@@ -1469,13 +1529,9 @@ def load_precollected_hitl(
                         next_obs=next_obs,
                         done=float(bool(dones[t])),
                         truncated=0.0,
-                        episode_id=f"{demo}_seg{seg}",
+                        episode_id=f"{episode_prefix}{demo}_seg{seg}",
                         step_in_episode=seg_step,
-                        info={
-                            "intervention": lab,
-                            "episode_len": n,
-                            "episode_num_interventions": n_interv_ep,
-                        },
+                        info=_info(t, lab),
                     )
                     seg_step += 1
                     prev_label = lab
@@ -1491,13 +1547,9 @@ def load_precollected_hitl(
                         next_obs=next_obs,
                         done=float(bool(dones[t])),
                         truncated=0.0,
-                        episode_id=str(demo),
+                        episode_id=f"{episode_prefix}{demo}",
                         step_in_episode=t,
-                        info={
-                            "intervention": int(interv[t]),
-                            "episode_len": n,
-                            "episode_num_interventions": n_interv_ep,
-                        },
+                        info=_info(t, int(interv[t])),
                     )
                 n_added += n
                 n_episodes += 1

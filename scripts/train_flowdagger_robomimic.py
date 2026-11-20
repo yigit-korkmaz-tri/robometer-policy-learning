@@ -78,7 +78,13 @@ from tqdm import tqdm
 # Reuse train_hitl.py's run-dir helpers and collect_hitl_rollout.py's HDF5 writer.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from collect_hitl_rollout import _read_source_env_args, _write_h5
-from train_hitl import _load_pretrain_cfg, _read_precollected_meta, _resolve_checkpoint_dir, _run_identity
+from train_hitl import (
+    _load_pretrain_cfg,
+    _max_episode_steps,
+    _read_precollected_meta,
+    _resolve_checkpoint_dir,
+    _run_identity,
+)
 
 from robometer_policy_learning.algorithms.flow_matching.modeling_flow import FlowMatchingActor
 from robometer_policy_learning.buffers.h5_replay_buffer import H5ReplayBuffer
@@ -247,7 +253,7 @@ def main(cfg: DictConfig):
     # ---- Collection env (single, non-chunked; the worker chunks) ----
     env, _ = setup_robomimic_env(
         dataset_path=cfg.env.h5_dataset_path, n_envs=1, device=device, seed=seed,
-        max_episode_steps=cfg.env.max_episode_steps + 200, use_full_state=cfg.env.use_full_state,
+        max_episode_steps=_max_episode_steps(cfg, "hitl.max_episode_steps"), use_full_state=cfg.env.use_full_state,
         terminate_on_success=True, chunk_size=None, n_action_steps=1,
     )
     action_dim = int(env.single_action_space.shape[0])
@@ -414,13 +420,15 @@ def main(cfg: DictConfig):
     precollected_samples = None
     if precollected:
         pre_buffer = _new_buffer()
-        for p in precollected:
-            pst = load_precollected_hitl(p, pre_buffer, lowdim_stats, remove_obs_keys)
+        for i_file, p in enumerate(precollected):
+            # Distinct episode ids per file: every file numbers its demos from demo_0.
+            prefix = f"f{i_file}_"
+            pst = load_precollected_hitl(p, pre_buffer, lowdim_stats, remove_obs_keys, episode_prefix=prefix)
             meta = _read_precollected_meta(p)
             same_policy = (meta.get("load_dir") is not None
                            and _run_identity(meta["load_dir"]) == _run_identity(load_dir)
                            and str(meta.get("checkpoint")) == str(OmegaConf.select(cfg, "checkpoint", default=None)))
-            n_noise = attach_recorded_noise(p, pre_buffer) if same_policy else 0
+            n_noise = attach_recorded_noise(p, pre_buffer, episode_prefix=prefix) if same_policy else 0
             logger.info(f"Precollected {p}: {pst['transitions']} transitions / {pst['episodes']} episodes "
                         f"({pst['human']} human); recorded noise for {n_noise} demos.")
             if not same_policy:
@@ -444,14 +452,14 @@ def main(cfg: DictConfig):
         eval_vectorization = "sync"
     eval_env, _ = setup_robomimic_env(
         dataset_path=cfg.env.h5_dataset_path, n_envs=int(OmegaConf.select(cfg, "eval.eval_num_envs", default=10)),
-        device=device, seed=seed + 14, max_episode_steps=cfg.env.max_episode_steps+200,
+        device=device, seed=seed + 14, max_episode_steps=_max_episode_steps(cfg, "eval.max_episode_steps"),
         use_full_state=cfg.env.use_full_state, terminate_on_success=True, chunk_size=chunk_size,
         n_action_steps=n_exec, vectorization=eval_vectorization,
     )
     eval_worker = BatchEvaluationWorker(
         eval_env=eval_env, device=device, num_episodes=int(cfg.eval.eval_num_episodes),
         record_video=cfg.eval.eval_record_video, logger=wandb_logger, lowdim_obs_stats=lowdim_stats,
-        max_episode_steps=int(cfg.env.max_episode_steps)+200,
+        max_episode_steps=_max_episode_steps(cfg, "eval.max_episode_steps"),
     )
 
     rollouts_per_iter = int(OmegaConf.select(cfg, "hitl.rollouts_per_iter", default=5))

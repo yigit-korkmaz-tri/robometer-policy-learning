@@ -81,6 +81,8 @@ class FlowMILE(BaseAlgorithm):
       velocity field on actions sampled from the rollout policy
     * anchor_monte_carlo_samples: number of action chunks sampled from the frozen rollout policy (per
       state) that the anchor loss matches velocity fields on
+    * nonintervention_marginal: "training" (MILE: label-0 marginal over pi_theta) or "rollout" (over the
+      stored sibling robot actions of the policy that produced the logged robot action)
     * normalize_score_gaps: standardize the probit score gap by an EMA running mean/std before
       applying probit_scale / intervention_cost (with score_gap_ema_decay, score_gap_norm_eps,
       score_gap_std_min, score_gap_clip)
@@ -166,6 +168,26 @@ class FlowMILE(BaseAlgorithm):
                 "collection-time pools the probit baseline would be sampled from the initial policy even "
                 "for data collected by later policies."
             )
+        # Source of the label-0 marginal's action samples (see config): the trained policy, or the stored
+        # pool of the policy that produced the logged robot action.
+        self.nonintervention_marginal = str(config.nonintervention_marginal).lower()
+        if self.nonintervention_marginal not in ("training", "rollout"):
+            raise ValueError(
+                f"nonintervention_marginal must be 'training' or 'rollout', got {config.nonintervention_marginal!r}."
+            )
+        if self.nonintervention_marginal == "rollout":
+            missing = [
+                name for name, on in (
+                    ("condition_nonintervention_on_robot", self.condition_nonintervention_on_robot),
+                    ("use_stored_rollout_samples", self.use_stored_rollout_samples),
+                ) if not on
+            ]
+            if missing:
+                raise ValueError(
+                    "nonintervention_marginal='rollout' requires " + " and ".join(f"{m}=true" for m in missing)
+                    + ": the sibling robot actions are compared against the logged robot action, and must come "
+                    "from the stored pool of the policy that produced it."
+                )
         # Fraction of the last batch's probit baseline that used stored (vs fresh fallback) samples.
         self._last_stored_sample_frac = float("nan")
         self.anchor_loss_weight = float(config.anchor_loss_weight)
@@ -210,6 +232,7 @@ class FlowMILE(BaseAlgorithm):
         print(f"FlowMILE: lambda_intervention={self.lambda_intervention}")
         print(f"FlowMILE: condition_intervention_on_action={self.condition_intervention_on_action}")
         print(f"FlowMILE: condition_nonintervention_on_robot={self.condition_nonintervention_on_robot}")
+        print(f"FlowMILE: nonintervention_marginal={self.nonintervention_marginal}")
         print(f"FlowMILE: reference_relative_score={self.reference_relative_score}")
         print(f"FlowMILE: use_stored_rollout_samples={self.use_stored_rollout_samples}")
         if self.use_stored_rollout_samples:
@@ -339,40 +362,57 @@ class FlowMILE(BaseAlgorithm):
                 written += 1
         return written
 
-    def _apply_stored_rollout_samples(
-        self, fresh_samples: torch.Tensor, batch: dict
+    def _gather_stored_rollout_samples(
+        self, obs: Union[dict, torch.Tensor], batch: dict, rows: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
-        """Substitute stored collection-time samples into the fresh rollout-sample tensor.
+        """Probit-baseline chunks ``[K, B, H, A]`` from the stored collection-time pools.
 
-        ``fresh_samples`` ``[K, B, H, A]`` are the current-policy chunks drawn in ``train_step``. For
-        each batch row whose sampled transition carries a stored pool (written by
-        :meth:`precompute_rollout_samples`), randomly draw ``K`` chunks from that ``[N, H, A]`` pool
-        (without replacement when ``N >= K``, else with replacement) and overwrite that row; rows
-        without a pool (e.g. offline anchor demos) keep the fresh current-policy samples. Records the
-        substituted fraction for logging. Returns a new ``[K, B, H, A]`` tensor.
+        For each needed batch row (``rows``, a ``[B]`` bool mask; None => all) whose transition carries a
+        stored pool (written by :meth:`precompute_rollout_samples`), randomly draw
+        ``K = monte_carlo_samples`` chunks from that ``[N, H, A]`` pool (without replacement when
+        ``N >= K``, else with replacement). Needed rows without a pool are sampled fresh from the frozen
+        rollout policy, so a fully pooled batch costs no ODE sampling at all. Rows outside ``rows`` (the
+        offline rows the probit skips) are left as zeros and never sampled. Records the pooled fraction
+        of the needed rows for logging.
         """
         info = batch.get("info")
-        K, B = fresh_samples.shape[0], fresh_samples.shape[1]
-        if not isinstance(info, (list, tuple)) or len(info) != B:
-            self._last_stored_sample_frac = 0.0
-            return fresh_samples
-
-        out = fresh_samples.clone()
+        K = self.monte_carlo_samples
         key = self.stored_rollout_key
-        substituted = 0
-        for b, d in enumerate(info):
-            if not (isinstance(d, dict) and key in d):
+        if isinstance(info, (list, tuple)):
+            pools = [d.get(key) if isinstance(d, dict) else None for d in info]
+        else:
+            pools = []
+        B = len(pools)
+        if B == 0:  # no per-row info to read pools from: everything is sampled fresh
+            self._last_stored_sample_frac = 0.0
+            return self._sample_policy_actions(self.rollout_policy, obs, K)
+
+        needed = [True] * B if rows is None else [bool(r) for r in rows.tolist()]
+        out_rows = []
+        for pool, need in zip(pools, needed, strict=True):
+            if not need:
+                out_rows.append(torch.zeros(K, self.horizon, self.online_actor.action_dim, device=self.device))
                 continue
-            pool = torch.as_tensor(np.asarray(d[key], dtype=np.float32), device=self.device)  # [N, H, A]
+            if pool is None:
+                out_rows.append(None)
+                continue
+            pool = torch.as_tensor(np.asarray(pool, dtype=np.float32), device=self.device)  # [N, H, A]
             n_pool = pool.shape[0]
             if n_pool >= K:
                 idx = torch.randperm(n_pool, device=self.device)[:K]  # K distinct draws
             else:
                 idx = torch.randint(n_pool, (K,), device=self.device)  # with replacement
-            out[:, b] = pool[idx]
-            substituted += 1
-        self._last_stored_sample_frac = substituted / B if B else float("nan")
-        return out
+            out_rows.append(pool[idx])
+        missing = [b for b, r in enumerate(out_rows) if r is None]
+        if missing:
+            mask = torch.zeros(B, dtype=torch.bool, device=self.device)
+            mask[missing] = True
+            fresh = self._sample_policy_actions(self.rollout_policy, self._index_obs(obs, mask), K)  # [K, M, H, A]
+            for j, b in enumerate(missing):
+                out_rows[b] = fresh[:, j]
+        n_needed = sum(needed)
+        self._last_stored_sample_frac = (n_needed - len(missing)) / n_needed if n_needed else float("nan")
+        return torch.stack(out_rows, dim=1)  # [K, B, H, A]
 
     def _prepare_actions(self, actions: torch.Tensor) -> torch.Tensor:
         """Coerce buffer actions into ``(B, horizon, action_dim)``."""
@@ -605,7 +645,45 @@ class FlowMILE(BaseAlgorithm):
         interventions: Optional[torch.Tensor] = None,
         rollout_samples: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """Compute MILE intervention probabilities for flow-matching actors.
+        """MILE intervention probabilities ``[B]``, computed on the online (label-0/1) rows only.
+
+        Offline (label-2) rows never enter the intervention BCE, so nothing of the probit is computed for
+        them: no baseline, no marginal, and they are left out of the score-gap normalization stats, the
+        probit diagnostics and the proximal penalty. Their entries are NaN. With ``interventions=None``
+        every row is treated as online. See :meth:`_compute_intervention_probs_on_rows` for the model.
+        """
+        if self.rollout_policy is None:
+            raise RuntimeError(
+                "FlowMILE requires a frozen rollout_policy. Call set_rollout_policy() before training."
+            )
+        if interventions is None:
+            return self._compute_intervention_probs_on_rows(obs, actions, interventions, rollout_samples)
+        rows = interventions < 1.5
+        if rows.all():  # online-only batch: no reindexing
+            return self._compute_intervention_probs_on_rows(obs, actions, interventions, rollout_samples)
+
+        probs = torch.full(interventions.shape, float("nan"), device=self.device)
+        if not rows.any():
+            self._last_score_diagnostics = {}
+            self._last_probit_diagnostics = {}
+            self._finalize_proximal_loss({})
+            return probs
+        probs[rows] = self._compute_intervention_probs_on_rows(
+            self._index_obs(obs, rows),
+            None if actions is None else actions[rows],
+            interventions[rows],
+            None if rollout_samples is None else rollout_samples[:, rows],
+        )
+        return probs
+
+    def _compute_intervention_probs_on_rows(
+        self,
+        obs: Union[dict, torch.Tensor],
+        actions: Optional[torch.Tensor] = None,
+        interventions: Optional[torch.Tensor] = None,
+        rollout_samples: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Compute MILE intervention probabilities for flow-matching actors on the given (online) rows.
 
         No-intervention uses the marginal:
             p(nu=1|s) = E_{a~pi_theta} Phi(beta(ell(a,s) - E_{a0~pi0}ell(a0,s)) - c)
@@ -615,55 +693,87 @@ class FlowMILE(BaseAlgorithm):
 
         If ``condition_nonintervention_on_robot`` is true, the baseline E_{a0~pi0}ell(a0,s) is
         replaced by the logged robot action's score ell(a_logged,s) on non-intervention (label-0)
-        transitions (label-1/2 keep the sampled baseline).
+        transitions (label-1 keeps the sampled baseline); the sampled chunks of label-0 rows are then
+        never scored.
 
-        ``rollout_samples`` ``[K, B, H, A]`` lets the caller pass frozen-rollout chunks already drawn
-        this step (reused for the anchor loss / diagnostics) so the ODE sampling is not repeated; when
-        None they are sampled here.
+        If additionally ``nonintervention_marginal == 'rollout'``, the label-0 marginal samples come from
+        the state's stored pool (sibling actions of the policy that produced a_r) instead of pi_theta:
+            p(nu=1|s,a_r) = E_{a~pool(s)} Phi(beta(ell(a,s) - w ell(a_r,s)) - c)
+
+        ``rollout_samples`` ``[K, B, H, A]`` lets the caller pass baseline chunks already drawn this
+        step (fresh, or from the stored pools) so the ODE sampling is not repeated; when None they are
+        sampled here, for the sampled-baseline rows only.
         """
-        if self.rollout_policy is None:
-            raise RuntimeError(
-                "FlowMILE requires a frozen rollout_policy. Call set_rollout_policy() before training."
-            )
-
-        # Robot/mental-model expectation under frozen rollout policy.
-        if rollout_samples is None:
-            rollout_samples = self._sample_policy_actions(
-                self.rollout_policy,
-                obs,
-                self.monte_carlo_samples,
-            )  # [K, B, H, A]
-        rollout_scores = self._score_stacked_actions(obs, rollout_samples)  # [K, B]
-        expected_rollout_score = rollout_scores.mean(dim=0)  # [B]
-
-        # Proximal regularizer
-        compute_proximal = self.proximal_loss_weight > 0.0
-        proximal_terms = {}
-
-        # Debug: raw (pre-probit) score means. The rollout baseline E_{a0~pi0} ell(a0,s) is recorded
-        # here; the observed human-correction score is added below when it is computed.
-        self._last_score_diagnostics = {
-            "expected_rollout_score_mean": float(expected_rollout_score.mean().item()),
-        }
-
         # Optionally replace the sampled rollout baseline E_{a0~pi0} ell(a0,s) with the score of the
         # actual LOGGED robot action on non-intervention (label-0) transitions. This conditions the
         # "robot did fine" baseline on what the robot actually did (the analogue of
         # condition_intervention_on_action for the robot term) instead of marginalizing over sampled
-        # rollout chunks. Only label-0 entries are overwritten; label-1/2 keep the sampled baseline.
+        # rollout chunks. Only label-0 entries use it; label-1/2 keep the sampled baseline.
+        robot_mask = None
         if self.condition_nonintervention_on_robot:
             if actions is None or interventions is None:
                 raise ValueError(
                     "condition_nonintervention_on_robot=True requires actions and interventions."
                 )
-            nonintervention_mask = interventions < 0.5
-            if nonintervention_mask.any():
-                robot_scores = self._action_scores(obs, self._prepare_actions(actions))  # [B]
-                self._last_score_diagnostics["nonintervention_robot_score_mean"] = float(
-                    robot_scores[nonintervention_mask].mean().item()
+            robot_mask = interventions < 0.5
+
+        # Rows that use the sampled baseline (None => all). Label-0 rows with a robot-action baseline
+        # are excluded up front: their sampled chunks would only be scored to be overwritten, and the
+        # scoring passes (with grad) are a large share of a train step.
+        sampled_mask = None if robot_mask is None else ~robot_mask
+        sampled_obs = obs if sampled_mask is None else self._index_obs(obs, sampled_mask)
+
+        # nonintervention_marginal='rollout': label-0 rows score their stored sibling robot chunks as the
+        # marginal samples. Taken here, before the baseline slicing below drops those rows (their pool
+        # chunks are gathered either way; with the default 'training' they go unused).
+        pool_marginal_samples = None
+        if self.nonintervention_marginal == "rollout" and robot_mask.any():
+            if rollout_samples is None:
+                raise ValueError(
+                    "nonintervention_marginal='rollout' needs the stored-pool chunks passed as rollout_samples "
+                    "(train_step gathers them with use_stored_rollout_samples=True)."
                 )
-                expected_rollout_score = expected_rollout_score.clone()
-                expected_rollout_score[nonintervention_mask] = robot_scores[nonintervention_mask]
+            pool_marginal_samples = rollout_samples[:, robot_mask]  # [K, B_r, H, A]
+
+        # Robot/mental-model expectation under frozen rollout policy, on the sampled-baseline rows.
+        sampled_baseline = None
+        if sampled_mask is None or sampled_mask.any():
+            if rollout_samples is None:
+                rollout_samples = self._sample_policy_actions(
+                    self.rollout_policy,
+                    sampled_obs,
+                    self.monte_carlo_samples,
+                )  # [K, B_s, H, A]
+            elif sampled_mask is not None:
+                rollout_samples = rollout_samples[:, sampled_mask]  # [K, B, H, A] -> [K, B_s, H, A]
+            rollout_scores = self._score_stacked_actions(sampled_obs, rollout_samples)  # [K, B_s]
+            sampled_baseline = rollout_scores.mean(dim=0)  # [B_s]
+
+        # Debug: raw (pre-probit) score means. The sampled rollout baseline E_{a0~pi0} ell(a0,s) is
+        # averaged over the rows that use it (label 1 only, when conditioning label 0 on the robot
+        # action); the observed human-correction score is added below when it is computed.
+        self._last_score_diagnostics = {}
+        if sampled_baseline is not None:
+            self._last_score_diagnostics["expected_rollout_score_mean"] = float(sampled_baseline.mean().item())
+
+        if robot_mask is None:
+            expected_rollout_score = sampled_baseline  # [B]
+        else:
+            expected_rollout_score = torch.zeros(robot_mask.shape[0], device=self.device)  # [B]
+            if sampled_baseline is not None:
+                expected_rollout_score[sampled_mask] = sampled_baseline
+            if robot_mask.any():
+                robot_scores = self._action_scores(
+                    self._index_obs(obs, robot_mask), self._prepare_actions(actions)[robot_mask]
+                )  # [B_r]
+                self._last_score_diagnostics["nonintervention_robot_score_mean"] = float(
+                    robot_scores.mean().item()
+                )
+                expected_rollout_score[robot_mask] = robot_scores
+
+        # Proximal regularizer
+        compute_proximal = self.proximal_loss_weight > 0.0
+        proximal_terms = {}
 
         # Proximal on the baseline term of the probit difference (post robot-substitution).
         if compute_proximal:
@@ -673,18 +783,32 @@ class FlowMILE(BaseAlgorithm):
         # The expectation is over the trainable policy.  Even when EMA is enabled, use
         # online_actor here; EMA is only for deployment/evaluation.  sample_actions() itself
         # is no_grad in FlowMatchingActor, so gradients flow only through the score evaluation below.
-        training_samples = self._sample_policy_actions(
-            self.online_actor,
-            obs,
-            self.monte_carlo_samples,
-        )
-        training_scores = self._score_stacked_actions(obs, training_samples)  # [K, B]
+        # With nonintervention_marginal='rollout', label-0 rows use their stored sibling robot chunks
+        # instead (fixed samples, so their gradient is exact), and the trainable policy is sampled only
+        # for the remaining (label-1) rows.
+        if pool_marginal_samples is None:
+            training_samples = self._sample_policy_actions(
+                self.online_actor,
+                obs,
+                self.monte_carlo_samples,
+            )
+            marginal_scores = self._score_stacked_actions(obs, training_samples)  # [K, B]
+        else:
+            train_rows = ~robot_mask
+            marginal_scores = torch.zeros(self.monte_carlo_samples, robot_mask.shape[0], device=self.device)
+            if train_rows.any():
+                train_obs = self._index_obs(obs, train_rows)
+                training_samples = self._sample_policy_actions(self.online_actor, train_obs, self.monte_carlo_samples)
+                marginal_scores[:, train_rows] = self._score_stacked_actions(train_obs, training_samples)
+            pool_scores = self._score_stacked_actions(self._index_obs(obs, robot_mask), pool_marginal_samples)
+            marginal_scores[:, robot_mask] = pool_scores  # [K, B_r]
+            self._last_score_diagnostics["rollout_marginal_score_mean"] = float(pool_scores.mean().item())
 
-        # Proximal on the marginal term of the probit difference.
+        # Proximal on the marginal term of the probit difference (whichever source its samples come from).
         if compute_proximal:
-            proximal_terms["training"] = proximal_score_loss(training_scores)
+            proximal_terms["training"] = proximal_score_loss(marginal_scores)
 
-        probit_diff_marginal = training_scores - self.expected_rollout_score_weight * expected_rollout_score.unsqueeze(0)  # [K, B]
+        probit_diff_marginal = marginal_scores - self.expected_rollout_score_weight * expected_rollout_score.unsqueeze(0)  # [K, B]
 
         # Optionally standardize the score gap by its EMA running mean/std before the probit, so
         # probit_scale / intervention_cost are decoupled from the absolute (drifting) scale of the
@@ -786,6 +910,7 @@ class FlowMILE(BaseAlgorithm):
         expected_rollout_score_means = []
         observed_human_score_means = []
         nonintervention_robot_score_means = []  # logged robot-action score on label-0 (when conditioning on it)
+        rollout_marginal_score_means = []  # sibling robot-chunk score on label-0 (nonintervention_marginal='rollout')
         expert_action_means = []
         sample_mse_errors = []
         unnormalized_sample_mse_errors = []
@@ -834,19 +959,26 @@ class FlowMILE(BaseAlgorithm):
                 if action_mask.any():
                     actions[action_mask] = actions[action_mask] + torch.randn_like(actions[action_mask]) * self.config.action_noise_std
 
-            # Sample frozen rollout-policy chunks ONCE this step; reused by the anchor loss and the
-            # rollout-score diagnostic (and, unless stored samples are used, the probit baseline).
-            rollout_samples = self._sample_policy_actions(
-                self.rollout_policy, obs, self.monte_carlo_samples
-            )  # [K, B, H, A]
-
-            # Probit baseline samples: with use_stored_rollout_samples, substitute each row's stored
-            # collection-time pool (randomly subsampled) for the rows that carry one; otherwise use
-            # the fresh current-policy samples. The fresh samples are still used below for the anchor
-            # loss and the rollout-score diagnostic regardless.
+            # Fresh frozen rollout-policy chunks are an ODE integration per chunk, so draw only what this
+            # step consumes. Without stored pools, the probit baseline needs all K = monte_carlo_samples
+            # and the anchor loss / rollout-score diagnostic reuse them. With stored pools, the baseline
+            # comes from the pools (fresh only for rows lacking one), so the fresh draw shrinks to the
+            # anchor's anchor_monte_carlo_samples (none when the anchor is off; the diagnostic then
+            # draws its own single chunk on logging steps).
             if self.use_stored_rollout_samples:
-                probit_rollout_samples = self._apply_stored_rollout_samples(rollout_samples, batch)
+                # Only online rows: offline (label-2) rows are skipped by the probit.
+                probit_rollout_samples = self._gather_stored_rollout_samples(
+                    obs, batch, rows=online_mask
+                )  # [K, B, H, A]
+                rollout_samples = (
+                    self._sample_policy_actions(self.rollout_policy, obs, self.anchor_monte_carlo_samples)
+                    if self.anchor_loss_weight > 0.0
+                    else None
+                )  # [n_anchor, B, H, A] or None
             else:
+                rollout_samples = self._sample_policy_actions(
+                    self.rollout_policy, obs, self.monte_carlo_samples
+                )  # [K, B, H, A]
                 probit_rollout_samples = rollout_samples
 
             intervention_probs = self._compute_intervention_probs(
@@ -865,6 +997,9 @@ class FlowMILE(BaseAlgorithm):
             )
             nonintervention_robot_score_means.append(
                 self._last_score_diagnostics.get("nonintervention_robot_score_mean", np.nan)
+            )
+            rollout_marginal_score_means.append(
+                self._last_score_diagnostics.get("rollout_marginal_score_mean", np.nan)
             )
 
             if online_mask.any():
@@ -924,8 +1059,8 @@ class FlowMILE(BaseAlgorithm):
                 expert_action_means.append(np.nan)
 
             # Score diagnostics each cost extra flow-matching passes, so compute them only every
-            # log_score_metrics_every gradient steps (the rollout-score reuses this step's already-
-            # sampled rollout chunks, so it adds only a scoring pass, not another ODE rollout).
+            # log_score_metrics_every gradient steps (the rollout-score reuses this step's fresh rollout
+            # chunks when any were drawn; with stored pools and no anchor it samples one chunk itself).
             log_scores = (
                 self.config.log_score_metrics_every > 0
                 and self.step_counter % self.config.log_score_metrics_every == 0
@@ -941,7 +1076,12 @@ class FlowMILE(BaseAlgorithm):
                         score_non_intervention_means.append(
                             self._action_scores(self._index_obs(obs, policy_mask), actions[policy_mask]).mean().item()
                         )
-                    score_rollout_means.append(self._action_scores(obs, rollout_samples[0]).mean().item())
+                    diag_rollout = (
+                        rollout_samples[0]
+                        if rollout_samples is not None
+                        else self._sample_policy_actions(self.rollout_policy, obs, 1)[0]
+                    )
+                    score_rollout_means.append(self._action_scores(obs, diag_rollout).mean().item())
 
             with torch.no_grad():
                 if (
@@ -987,15 +1127,21 @@ class FlowMILE(BaseAlgorithm):
             # Raw (pre-probit) score means straight from _compute_intervention_probs: the rollout
             # baseline E_{a0~pi0} ell(a0,s) and the observed human-correction action score ell(a_h,s).
             # observed_human_score_mean is NaN unless condition_intervention_on_action=True and the
-            # batch contained label-1 human corrections.
+            # batch contained label-1 human corrections. Offline (label-2) rows are never scored; with
+            # condition_nonintervention_on_robot=True, expected_rollout_score_mean averages label-1 rows only.
             "expected_rollout_score_mean": float(np.nanmean(expected_rollout_score_means)) if np.any(~np.isnan(expected_rollout_score_means)) else float("nan"),
             "observed_human_score_mean": float(np.nanmean(observed_human_score_means)) if np.any(~np.isnan(observed_human_score_means)) else float("nan"),
             # Logged robot-action score on label-0 states, used as the baseline when
             # condition_nonintervention_on_robot=True (NaN otherwise / when no label-0 in the batch).
             "nonintervention_robot_score_mean": float(np.nanmean(nonintervention_robot_score_means)) if np.any(~np.isnan(nonintervention_robot_score_means)) else float("nan"),
+            # nonintervention_marginal='rollout': mean score of the sibling robot chunks scored against the
+            # logged robot action on label-0 states (NaN otherwise). Healthy => stays below
+            # nonintervention_robot_score_mean, i.e. accepted actions score above their siblings.
+            "rollout_marginal_score_mean": float(np.nanmean(rollout_marginal_score_means)) if np.any(~np.isnan(rollout_marginal_score_means)) else float("nan"),
         }
         # Fraction of the probit baseline that used stored collection-time pools (only when the option
-        # is on). ~1.0 on online-only batches; < 1.0 when offline-anchor rows fall back to fresh samples.
+        # is on), over the online rows the probit uses (offline rows are skipped); < 1.0 only when an
+        # online transition has no pool (e.g. loaded from a file written without them).
         if stored_sample_fracs and np.any(~np.isnan(stored_sample_fracs)):
             metrics_dict["stored_rollout_sample_frac"] = float(np.nanmean(stored_sample_fracs))
         # Score diagnostics are computed only on logging steps (log_score_metrics_every), so add them
