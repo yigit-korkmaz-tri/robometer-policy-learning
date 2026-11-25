@@ -5,9 +5,10 @@ dataset-level reweighting schemes (SIRIUS and IWR) for weighted behavioral cloni
 """
 
 import os
+import re
 import time
 from collections import defaultdict
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import torch
@@ -1241,6 +1242,24 @@ def analyze_intervention_segments(
     return stats
 
 
+_SEGMENT_ID_RE = re.compile(r"^(?P<base>.+)_seg(?P<seg>\d+)$")
+
+
+def _original_episode_key(transition) -> Tuple[Any, int, int]:
+    """``(original episode id, segment index, step)`` for ordering a transition within its rollout.
+
+    ``segment_by_intervention`` stores each contiguous same-label run of a rollout as its own episode
+    ``f"{episode_id}_seg{k}"`` (k counts up per rollout) with ``step_in_episode`` renumbered from 0.
+    Stripping the suffix and ordering by ``(k, step)`` recovers the original trajectory; unsegmented
+    episodes map to ``(episode_id, 0, step)``.
+    """
+    ep_id, step = transition.episode_id, transition.step_in_episode
+    m = _SEGMENT_ID_RE.match(ep_id) if isinstance(ep_id, str) else None
+    if m is None:
+        return ep_id, 0, step
+    return m.group("base"), int(m.group("seg")), step
+
+
 def label_action_modes(online_buffer, pre_intervention_window: int):
     """Classify every online transition into an action mode.
 
@@ -1248,16 +1267,20 @@ def label_action_modes(online_buffer, pre_intervention_window: int):
     ``counts`` maps each mode to its online sample count. A rollout step (label 0) is
     ``pre_intervention`` if it lies within ``pre_intervention_window`` steps immediately before
     the onset of a contiguous human-intervention segment in the same episode.
+
+    Segments written by ``segment_by_intervention`` are stitched back into their original rollout
+    first: otherwise every human segment starts its own episode, no rollout step ever precedes an
+    onset, and nothing is labelled pre_intervention.
     """
     episodes = defaultdict(list)
     for t in online_buffer.get_all_transitions():
         if t is not None:
-            episodes[t.episode_id].append(t)
+            episodes[_original_episode_key(t)[0]].append(t)
 
     labeled = []
     counts = {DEMO: 0, INTERVENTION: 0, PRE_INTERVENTION: 0, ROLLOUT: 0}
     for trs in episodes.values():
-        trs = sorted(trs, key=lambda x: x.step_in_episode)
+        trs = sorted(trs, key=lambda x: _original_episode_key(x)[1:])
         labels = [int(round(float((x.info or {}).get("intervention", ROLLOUT_LABEL)))) for x in trs]
 
         is_pre = [False] * len(trs)
@@ -1288,15 +1311,27 @@ def compute_sirius_weights(
     offline_buffer=None,
     pre_intervention_window: int = 15,
     target_intv: float = 0.5,
-    target_pre_intv: float = 0.002,
 ) -> Dict[str, Any]:
     """Assign SIRIUS class weights to samples IN PLACE and return diagnostics.
+
+    Reference: Liu et al., "Robot Learning on the Job: Human-in-the-Loop Autonomy and Learning During
+    Deployment" (Sirius). With ``P(c) = N_c / N`` the share of class ``c`` and ``P*(c)`` its target
+    share of the weighted loss, each sample gets ``w_c = P*(c) / P(c)``:
+
+        class             P*(c)                    w_c
+        demo              P(demo)                  1
+        intervention      target_intv (0.5)        target_intv / P(intv)
+        pre_intervention  0                        0   (ignored, not pushed away from)
+        rollout           1 - target_intv - P(demo) (1 - target_intv - P(demo)) / P(rollout)
+
+    e.g. 20% demo / 60% rollout / 10% pre / 10% intervention -> weights 1 / 0.5 / 0 / 5.
 
     Args:
         online_buffer: ReplayBuffer of collected rollouts (intervention labels 0/1, optionally 2).
         offline_buffer: optional H5ReplayBuffer of demos (all ``demo`` class, uniform weight 1.0).
-        pre_intervention_window: window length W of rollout steps before an intervention onset.
-        target_intv / target_pre_intv: target probability masses for those two classes.
+        pre_intervention_window: window length W of rollout steps before an intervention onset
+            (paper: 15 steps, ~2 s of human reaction time).
+        target_intv: target share of the weighted loss carried by interventions.
 
     Returns:
         dict with ``counts``, ``ratios``, and per-class ``weights`` (for logging).
@@ -1313,8 +1348,9 @@ def compute_sirius_weights(
 
     w_demo = 1.0
     w_intv = target_intv / ratios[INTERVENTION] if ratios[INTERVENTION] > 0 else 0.0
-    w_pre = target_pre_intv / ratios[PRE_INTERVENTION] if ratios[PRE_INTERVENTION] > 0 else 0.0
-    rollout_mass = 1.0 - target_intv - ratios[DEMO] - target_pre_intv
+    # The actions that led to a takeover are dropped from the loss entirely (zero weight).
+    w_pre = 0.0
+    rollout_mass = 1.0 - target_intv - ratios[DEMO]
     if rollout_mass < 0.0:
         logger.warning(
             f"SIRIUS: residual rollout mass is negative ({rollout_mass:.3f}); demos dominate "
@@ -1341,24 +1377,30 @@ def compute_sirius_weights(
     return {"counts": counts, "ratios": ratios, "weights": weights}
 
 
-def compute_iwr_weights(online_buffer) -> Dict[str, Any]:
-    """IWR (Intervention Weighted Regression) reweighting: balance corrections vs autonomy.
+def compute_iwr_weights(online_buffer, offline_buffer=None) -> Dict[str, Any]:
+    """IWR (Intervention Weighted Regression) reweighting: balance corrections vs everything else.
 
     Reference: Mandlekar et al., "Human-in-the-Loop Imitation Learning using Remote Teleoperation".
 
-    Each sample is labelled by who was in control:
+    Each sample falls in one of two groups:
       * ``intervention`` (D_I): human corrections (intervention label 1),
-      * ``robot``        (D_R): the policy acting autonomously (everything else).
-    IWR makes the two groups contribute equally during BC even when corrections are rare::
+      * ``robot``        (D_R): every non-intervention sample -- autonomous policy steps (label 0),
+        any label-2 demos in the online buffer, AND the offline demos (``offline_buffer``).
+    IWR makes the two groups contribute equally to the weighted loss even when corrections are rare::
 
+        L = 0.5 * E_{D_I}[l_BC] + 0.5 * E_{D_R}[l_BC]
         w_intervention = 0.5 / (num_i / (num_i + num_r))
         w_robot        = 0.5 / (num_r / (num_i + num_r))
 
-    Operates on online HITL data only (no offline demos). Weights are assigned in place per
-    online sample and surface as ``batch['weight']`` for weighted BC. Returns counts/weights.
+    i.e. ``w_I / w_R = |D_R| / |D_I|``; the absolute scale (mean weight 1 over the dataset) is irrelevant
+    since the weighted losses normalize by ``w.sum()``. Online weights are assigned in place per sample;
+    the offline buffer gets ``w_robot`` uniformly via ``set_weights``. Both surface as ``batch['weight']``.
+    Leaving the offline demos out of D_R (at weight 1) would hand them extra mass outside either group and
+    push the intervention share below 50%. Returns counts/weights.
     """
     labeled = []  # (transition, is_intervention)
-    num_i = num_r = 0
+    num_i = 0
+    num_r = len(offline_buffer) if offline_buffer is not None else 0  # offline demos are non-intervention
     for t in online_buffer.get_all_transitions():
         if t is None:
             continue
@@ -1378,6 +1420,8 @@ def compute_iwr_weights(online_buffer) -> Dict[str, Any]:
 
     for t, is_intv in labeled:
         t.weight = float(w_intervention if is_intv else w_robot)
+    if offline_buffer is not None:
+        offline_buffer.set_weights(w_robot)
 
     logger.info(
         f"IWR reweighting | num_i={num_i} num_r={num_r} "

@@ -29,6 +29,13 @@ is. null (or either label missing) => label-agnostic, so the human share follows
 For MILE-style algorithms this also shifts the probit's class balance (its BCE is unweighted), so the
 learned intervention probabilities are no longer calibrated to the true rate.
 
+``hitl.pure_policy_chunks=true`` (chunked sampling, online buffer) keeps each rollout as one episode
+but only admits chunks that either start on a human step (and may run into the policy steps after the
+takeover, e.g. [H,H,R,R]) or are policy throughout ([R,R,R,R]). A policy-labelled chunk thus never hides
+an upcoming takeover, while human takeovers shorter than the chunk are kept (unlike
+``segment_by_intervention``, with which it cannot be combined). Takeovers with fewer than chunk_size
+steps left before the episode ends still cannot form a chunk.
+
 ``hitl.retrain_from_init=true`` makes each iteration's training phase restart from the initial
 (``load_dir``) weights with a fresh optimizer on the aggregated data, instead of fine-tuning the
 previous iteration's policy. Collection still runs with the previous iteration's trained policy, and
@@ -142,6 +149,7 @@ if "MUJOCO_GL" not in os.environ:
 import cv2  # noqa: F401  (import order matters; keep above torch)
 
 import copy
+import random
 import sys
 from collections import OrderedDict
 from datetime import datetime
@@ -284,6 +292,17 @@ def _max_episode_steps(cfg: DictConfig, key: str) -> int:
     return int(cfg.env.max_episode_steps) if value is None else int(value)
 
 
+def _log_chunk_span_counts(online_buffer, chunk_size, pure_policy_chunks: bool, context: str):
+    """Log how many valid chunk spans start on a human vs a policy step (after pure_policy_chunks filtering)."""
+    if chunk_size is None or not hasattr(online_buffer, "chunk_span_counts"):
+        return
+    counts = online_buffer.chunk_span_counts(int(chunk_size))
+    logger.info(
+        f"[{context}] valid chunk spans (chunk_size={chunk_size}, pure_policy_chunks={pure_policy_chunks}): "
+        f"{counts['human']} human-start, {counts['policy']} policy-start"
+    )
+
+
 def _read_precollected_meta(path: str) -> dict:
     """Return the provenance metadata dict written under ``/meta`` by collect_hitl_rollout.py (or {})."""
     import json
@@ -387,6 +406,16 @@ def main(cfg: DictConfig):
     OmegaConf.set_struct(cfg, True)
     OmegaConf.resolve(cfg)
     logger.info(f"Adopted env/training/model/policy from {os.path.join(load_dir, '.hydra', 'config.yaml')}")
+
+    # Seed buffer batch sampling (python random), flow/diffusion/probit noise and net init (torch), as
+    # train_supervised.py does. The envs built below re-seed numpy's global RNG for scene placement; resets
+    # keep advancing it, so each round sees new initial states while a same-seed rerun repeats them.
+    seed = int(OmegaConf.select(cfg, "hitl.seed", default=0))
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
     wandb_logger.log_hparams(OmegaConf.to_container(cfg, resolve=True))
 
     alg_name = str(OmegaConf.select(cfg, "alg.offline_alg_name", default="mile")).lower()
@@ -512,6 +541,15 @@ def main(cfg: DictConfig):
     # chunked sampler yields label-homogeneous chunks (no trailing-policy dilution) while keeping both
     # classes for the probit. Applies to the precollected load and the online collection worker.
     segment_by_intervention = bool(OmegaConf.select(cfg, "hitl.segment_by_intervention", default=False))
+    # Chunk-span filter on the online buffer: policy-start chunks must be all-policy, human-start chunks
+    # may run into the following policy steps (keeps takeovers shorter than chunk_size).
+    pure_policy_chunks = bool(OmegaConf.select(cfg, "hitl.pure_policy_chunks", default=False))
+    if pure_policy_chunks and segment_by_intervention:
+        raise ValueError(
+            "hitl.pure_policy_chunks=true cannot be combined with hitl.segment_by_intervention=true: "
+            "segmenting already makes chunks label-homogeneous and drops the takeovers shorter than "
+            "chunk_size that pure_policy_chunks exists to keep. Set one of them to false."
+        )
     # When true, online collection keeps only successful rollouts that contain >= 1 human
     # intervention (discarding intervention-free successes); false keeps all successful rollouts.
     keep_only_hitl_rollouts = bool(OmegaConf.select(cfg, "hitl.keep_only_hitl_rollouts", default=False))
@@ -627,6 +665,10 @@ def main(cfg: DictConfig):
         elif human_mode != "real":
             raise ValueError(f"hitl.human_mode must be 'real', 'simulated', or 'toggle', got {human_mode!r}.")
 
+    if pure_policy_chunks and chunk_size is None:
+        logger.warning("hitl.pure_policy_chunks has no effect without training.chunk_size (no chunked sampling).")
+    if pure_policy_chunks and store_only_human:
+        logger.warning("hitl.pure_policy_chunks has no effect with store_only_human=true (no policy steps stored).")
     if chunk_size is None:
         sampler = RandomSampler()
     else:
@@ -672,6 +714,7 @@ def main(cfg: DictConfig):
         max_action=action_max,
         recent_ratio=None if recent_round_ratio is None else float(recent_round_ratio),
         human_ratio=None if human_ratio is None else float(human_ratio),
+        pure_policy_chunks=pure_policy_chunks,
         epoch_sampling=epoch_sampling,
     )
 
@@ -821,6 +864,7 @@ def main(cfg: DictConfig):
             analyze_intervention_segments(
                 online_buffer, chunk_size=chunk_size, context="precollected dataset"
             )
+            _log_chunk_span_counts(online_buffer, chunk_size, pure_policy_chunks, "precollected dataset")
 
     # ---- Training buffer (online, optionally mixed with offline) + algorithm ----
     if use_offline:
@@ -1133,6 +1177,7 @@ def main(cfg: DictConfig):
             analyze_intervention_segments(
                 online_buffer, chunk_size=chunk_size, context=f"online buffer (iter {it + 1})"
             )
+            _log_chunk_span_counts(online_buffer, chunk_size, pure_policy_chunks, f"online buffer (iter {it + 1})")
 
             # --- 1b) Optional class reweighting (recomputed each round as the dataset grows) ---
             if reweighting == "sirius":
@@ -1144,7 +1189,8 @@ def main(cfg: DictConfig):
                 log_d.update({f"weight_{k}": v for k, v in stats.get("weights", {}).items()})
                 wandb_logger.log(log_d, step=algo.step_counter, prefix="sirius")
             elif reweighting == "iwr":
-                stats = compute_iwr_weights(online_buffer)  # corrections (D_I) vs autonomy (D_R), online only
+                # corrections (D_I) vs all non-intervention samples incl. offline demos (D_R)
+                stats = compute_iwr_weights(online_buffer, offline_buffer if use_offline else None)
                 log_d = {f"count_{k}": v for k, v in stats["counts"].items()}
                 log_d.update({f"weight_{k}": v for k, v in stats.get("weights", {}).items()})
                 wandb_logger.log(log_d, step=algo.step_counter, prefix="iwr")

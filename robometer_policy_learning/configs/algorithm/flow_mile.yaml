@@ -29,6 +29,9 @@ condition_nonintervention_on_robot: true  # baseline = logged robot action's sco
 # a_robot: "the accepted robot action beats its sibling robot actions"). "rollout" requires
 # condition_nonintervention_on_robot=true and use_stored_rollout_samples=true.
 nonintervention_marginal: training
+# [rollout only] true => stop-gradient through the sibling chunks' scores in the label-0 marginal: the
+# preference is met by raising ell(a_robot) only, never by fitting the siblings worse (see config).
+detach_rollout_marginal: false
 
 # Flow-MILE specific (flow-matching-loss log-prob proxy)
 score_monte_carlo_samples: 1           # flow-matching (t, x0) samples used to estimate ell(a, s)

@@ -64,6 +64,7 @@ if "MUJOCO_GL" not in os.environ:
 import cv2  # noqa: F401  (import order matters; keep above torch)
 
 import json
+import random
 import sys
 from datetime import datetime
 
@@ -227,7 +228,12 @@ def main(cfg: DictConfig):
     fd = cfg.flowdagger
     seed = int(OmegaConf.select(cfg, "hitl.seed", default=0))
     rng = np.random.default_rng(seed)
+    # Global RNGs too, as train_supervised.py: python random (buffers/samplers), numpy, torch + CUDA.
+    random.seed(seed)
+    np.random.seed(seed)
     torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
     if OmegaConf.select(cfg, "hitl.segment_by_intervention", default=False):
         raise ValueError("hitl.segment_by_intervention=true splits episodes at takeovers, which hides the "
@@ -265,6 +271,13 @@ def main(cfg: DictConfig):
         action_min = action_max = None
     chunk_size = OmegaConf.select(cfg, "training.chunk_size", default=None)
     n_exec = int(OmegaConf.select(cfg, "training.n_action_steps", default=1) or 1)
+    # Human windows shorter than this are dropped. Default (null) = n_action_steps: every action the steered
+    # policy executes from a window's start state is then a real human action; the repeat-last-action padding
+    # only fills the never-executed tail. Close to the official code, whose inverted chunks are full query_freq
+    # chunks (padded only at episode end). With delta-pose control a repeated action keeps moving, not holds.
+    _min_hw = OmegaConf.select(cfg, "flowdagger.min_human_window", default=None)
+    min_human_window = min(n_exec, actor.horizon) if _min_hw is None else int(_min_hw)
+    logger.info(f"flowdagger.min_human_window = {min_human_window} (horizon {actor.horizon}, n_action_steps {n_exec})")
     lowdim_stats = {}
     if bool(OmegaConf.select(cfg, "training.normalize_lowdim_obs", default=False)):
         lowdim_stats = H5ReplayBuffer(
@@ -362,7 +375,7 @@ def main(cfg: DictConfig):
         """build_round_samples + logging; saves ``<file_tag>_samples.h5``. Returns the samples (or None)."""
         samples, st = build_round_samples(
             buffer, actor, device, use_policy=policy, drop_pre_takeover_chunk=bool(fd.drop_pre_takeover_chunk),
-            human_window_stride=stride, min_human_window=int(fd.min_human_window), fp_iters=int(fd.fp_iters),
+            human_window_stride=stride, min_human_window=min_human_window, fp_iters=int(fd.fp_iters),
             mse_threshold=fd.inversion_mse_threshold, round_idx=round_idx,
         )
         if samples is None:

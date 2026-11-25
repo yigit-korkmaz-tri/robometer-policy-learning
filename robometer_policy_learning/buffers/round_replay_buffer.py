@@ -5,13 +5,18 @@ import numpy as np
 
 from robometer_policy_learning.buffers.replay_buffer import ReplayBuffer
 
-# Online HITL intervention label of a human-correction step (0 = autonomous policy).
+# Online HITL intervention labels: 0 = autonomous policy, 1 = human correction (2 = offline demo).
+POLICY_LABEL = 0
 HUMAN_LABEL = 1
 
 
+def _label(transition) -> int:
+    label = (transition.info or {}).get("intervention", POLICY_LABEL) if transition is not None else POLICY_LABEL
+    return round(float(np.asarray(label).reshape(-1)[0]))
+
+
 def _is_human(transition) -> bool:
-    label = (transition.info or {}).get("intervention", 0) if transition is not None else 0
-    return round(float(np.asarray(label).reshape(-1)[0])) == HUMAN_LABEL
+    return _label(transition) == HUMAN_LABEL
 
 
 class RoundReplayBuffer(ReplayBuffer):
@@ -34,10 +39,21 @@ class RoundReplayBuffer(ReplayBuffer):
     Works with both RandomSampler (``sample_indices``) and ChunkedSequentialSampler
     (``get_contiguous_chunks``). Chunks never straddle rounds since an episode is added in one round.
     With ``epoch_sampling`` each pool (round x label) is cycled in its own epoch passes.
+
+    ``pure_policy_chunks`` restricts which chunk spans are valid: a span starting on a policy (label-0)
+    step must be policy throughout (``[R,R,R,R]``), while a span starting on a human/offline step may
+    run into whatever follows (``[H,H,R,R]``). Unlike segmenting episodes by label, this keeps human
+    takeovers shorter than ``chunk_size`` (as long as H steps remain before the episode ends) while
+    never letting a policy-labelled chunk hide an upcoming takeover. Affects chunked sampling only.
     """
 
     def __init__(
-        self, *args, recent_ratio: Optional[float] = None, human_ratio: Optional[float] = None, **kwargs
+        self,
+        *args,
+        recent_ratio: Optional[float] = None,
+        human_ratio: Optional[float] = None,
+        pure_policy_chunks: bool = False,
+        **kwargs,
     ):
         super().__init__(*args, **kwargs)
         if recent_ratio is not None and not 0.0 <= recent_ratio <= 1.0:
@@ -46,12 +62,14 @@ class RoundReplayBuffer(ReplayBuffer):
             raise ValueError(f"human_ratio must be in [0, 1] or None, got {human_ratio}")
         self.recent_ratio = recent_ratio
         self.human_ratio = human_ratio
+        self.pure_policy_chunks = bool(pure_policy_chunks)
         self.current_round = 0
         self._pos_round: List[Optional[int]] = [None] * self.capacity  # round of each buffer position
         self._episode_round: Dict[Any, int] = {}  # round an episode was (first) added in
         self._position_cache = None  # (key, recent_positions, past_positions)
         self._label_cache = None  # (key, {label: (recent, past)}) for transitions
         self._span_cache = None  # (key, {label: (recent, past)}) for chunk spans
+        self._filtered_span_cache: Dict[Any, List[tuple]] = {}  # (key, chunk_size, pool) -> allowed spans
 
     def start_round(self, round_idx: int):
         """Mark that transitions added from now on belong to round ``round_idx`` (the "recent" round)."""
@@ -60,6 +78,7 @@ class RoundReplayBuffer(ReplayBuffer):
 
     def _invalidate(self):
         self._position_cache = self._label_cache = self._span_cache = None
+        self._filtered_span_cache = {}
 
     def _add(self, obs, action, reward, next_obs, done, truncated, episode_id=None, step_in_episode=None, **kwargs):
         pos = self._write_pos
@@ -144,6 +163,41 @@ class RoundReplayBuffer(ReplayBuffer):
                     groups["human" if _is_human(self.buffer[i]) else "policy"][side].append(i)
             self._label_cache = (key, groups)
         return self._label_cache[1]
+
+    # ---- pure_policy_chunks: filter chunk spans by their labels ----
+    def _span_allowed(self, span: tuple) -> bool:
+        """A span starting on a non-policy step is always allowed; a policy-start span must be all policy."""
+        if _label(self.buffer[span[0]]) != POLICY_LABEL:
+            return True
+        return all(_label(self.buffer[pos]) == POLICY_LABEL for pos in span[1:])
+
+    def _chunk_spans(self, episodes, chunk_size: int) -> List[tuple]:
+        spans = super()._chunk_spans(episodes, chunk_size)
+        if not self.pure_policy_chunks:
+            return spans
+        return [span for span in spans if self._span_allowed(span)]
+
+    def _chunks_from_episodes(self, episodes, chunk_size: int, max_chunks: int, pool: str = "all"):
+        # The base random path draws starts and rejects only non-contiguous windows; rejecting
+        # label-mixed ones there too would return short batches. Enumerate the allowed spans instead
+        # (uniform over spans = the base's episode weighting by number of valid starts). The epoch
+        # path already goes through the filtered _chunk_spans.
+        if not self.pure_policy_chunks or self.epoch_sampling or chunk_size <= 0 or max_chunks <= 0:
+            return super()._chunks_from_episodes(episodes, chunk_size, max_chunks, pool=pool)
+        key = (self._cache_key(), chunk_size, pool)
+        spans = self._filtered_span_cache.get(key)
+        if spans is None:
+            spans = self._chunk_spans(list(episodes), chunk_size)
+            self._filtered_span_cache[key] = spans
+        if not spans:
+            return []
+        picked = random.sample(spans, max_chunks) if len(spans) >= max_chunks else random.choices(spans, k=max_chunks)
+        return [[self.buffer[pos] for pos in span] for span in picked]
+
+    def chunk_span_counts(self, chunk_size: int) -> Dict[str, int]:
+        """Number of valid chunk spans by first-step label ('human' / 'policy'), after any filtering."""
+        groups = self._label_spans(int(chunk_size))
+        return {label: len(recent) + len(past) for label, (recent, past) in groups.items()}
 
     def _label_spans(self, chunk_size: int) -> Dict[str, Tuple[List[tuple], List[tuple]]]:
         """Every valid chunk span, split by its first step's label and by round; cached until the next add."""

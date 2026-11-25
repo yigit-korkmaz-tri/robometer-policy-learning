@@ -83,6 +83,13 @@ class FlowMILEConfig(BaseAlgorithmConfig):
     #                 use_stored_rollout_samples=True (the samples must come from the policy that
     #                 produced a_r, which fresh rollout_policy samples are not across rounds).
     nonintervention_marginal: str = "training"
+    # [nonintervention_marginal="rollout" only] true => stop-gradient through the sibling robot chunks'
+    # scores ell(a_sib, s) in the label-0 marginal, so the preference "a_r over its siblings" can only be
+    # satisfied by raising ell(a_r, s) (bounded: flow_loss_theta >= 0) and never by fitting the siblings
+    # worse (unbounded). a_r and its siblings are i.i.d. draws of one policy, so without this the label-0
+    # term can collapse the velocity field around the policy's own mode. Label-1 rows are unchanged
+    # (their baseline keeps its gradient). The probit value itself is identical either way.
+    detach_rollout_marginal: bool = False
 
     # ----- Flow-matching log-prob proxy (flow-matching loss) -----
     # Flow-matching samples (t, x0) used to estimate the per-sample score ell(a, s).

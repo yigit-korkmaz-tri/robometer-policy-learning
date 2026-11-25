@@ -83,6 +83,8 @@ class FlowMILE(BaseAlgorithm):
       state) that the anchor loss matches velocity fields on
     * nonintervention_marginal: "training" (MILE: label-0 marginal over pi_theta) or "rollout" (over the
       stored sibling robot actions of the policy that produced the logged robot action)
+    * detach_rollout_marginal: with the "rollout" marginal, stop-gradient through the sibling scores so
+      the label-0 preference only raises the logged robot action's score
     * normalize_score_gaps: standardize the probit score gap by an EMA running mean/std before
       applying probit_scale / intervention_cost (with score_gap_ema_decay, score_gap_norm_eps,
       score_gap_std_min, score_gap_clip)
@@ -188,6 +190,13 @@ class FlowMILE(BaseAlgorithm):
                     + ": the sibling robot actions are compared against the logged robot action, and must come "
                     "from the stored pool of the policy that produced it."
                 )
+        # Stop-gradient through the label-0 sibling scores (rollout marginal only; see config).
+        self.detach_rollout_marginal = bool(getattr(config, "detach_rollout_marginal", False))
+        if self.detach_rollout_marginal and self.nonintervention_marginal != "rollout":
+            print(
+                "FlowMILE: WARNING detach_rollout_marginal=true has no effect unless "
+                "nonintervention_marginal='rollout'."
+            )
         # Fraction of the last batch's probit baseline that used stored (vs fresh fallback) samples.
         self._last_stored_sample_frac = float("nan")
         self.anchor_loss_weight = float(config.anchor_loss_weight)
@@ -233,6 +242,7 @@ class FlowMILE(BaseAlgorithm):
         print(f"FlowMILE: condition_intervention_on_action={self.condition_intervention_on_action}")
         print(f"FlowMILE: condition_nonintervention_on_robot={self.condition_nonintervention_on_robot}")
         print(f"FlowMILE: nonintervention_marginal={self.nonintervention_marginal}")
+        print(f"FlowMILE: detach_rollout_marginal={self.detach_rollout_marginal}")
         print(f"FlowMILE: reference_relative_score={self.reference_relative_score}")
         print(f"FlowMILE: use_stored_rollout_samples={self.use_stored_rollout_samples}")
         if self.use_stored_rollout_samples:
@@ -800,7 +810,11 @@ class FlowMILE(BaseAlgorithm):
                 train_obs = self._index_obs(obs, train_rows)
                 training_samples = self._sample_policy_actions(self.online_actor, train_obs, self.monte_carlo_samples)
                 marginal_scores[:, train_rows] = self._score_stacked_actions(train_obs, training_samples)
-            pool_scores = self._score_stacked_actions(self._index_obs(obs, robot_mask), pool_marginal_samples)
+            # detach_rollout_marginal: the siblings are i.i.d. with a_r, so the only way to widen the gap
+            # through them is to fit the policy's own mode worse (unbounded); score them without grad so
+            # the label-0 preference moves the policy toward a_r instead. Also skips their backward pass.
+            with torch.set_grad_enabled(torch.is_grad_enabled() and not self.detach_rollout_marginal):
+                pool_scores = self._score_stacked_actions(self._index_obs(obs, robot_mask), pool_marginal_samples)
             marginal_scores[:, robot_mask] = pool_scores  # [K, B_r]
             self._last_score_diagnostics["rollout_marginal_score_mean"] = float(pool_scores.mean().item())
 

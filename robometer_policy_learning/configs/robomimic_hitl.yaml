@@ -73,6 +73,9 @@ hitl:
   # sampling yields label-homogeneous chunks (no trailing-policy dilution) while keeping both classes.
   # Segments shorter than chunk_size are dropped. Applies to precollected load + online collection.
   segment_by_intervention: false
+  # [chunked] true => policy-start chunks must be all-policy ([R,R,R,R]); human-start chunks may run into
+  # the policy steps after the takeover ([H,H,R,R]). Keeps short takeovers. Exclusive with the above.
+  pure_policy_chunks: false
   # [online collection] true => keep only successful rollouts with >= 1 human intervention; false =>
   # keep all successful rollouts. Counts toward rollouts_per_iter only when kept.
   keep_only_hitl_rollouts: true

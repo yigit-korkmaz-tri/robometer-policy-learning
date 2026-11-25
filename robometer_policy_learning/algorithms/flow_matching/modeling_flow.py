@@ -504,7 +504,12 @@ class FlowMatching(BaseAlgorithm):
                 and (self.step_counter + 1) % self.config.log_sample_metrics_every == 0
             ):
                 with torch.no_grad():
+                    # sample_actions doesn't toggle eval itself (act() does), and the EMA copy is left in
+                    # train mode, so dropout / finetuned-BatchNorm would otherwise be active here.
+                    was_training = self.actor.training
+                    self.actor.eval()
                     sampled = self.actor.sample_actions(obs)
+                    self.actor.train(was_training)
                     if sampled.shape != expert_actions.shape:
                         sampled = sampled.reshape(expert_actions.shape)
                     sample_mse_errors.append(F.mse_loss(sampled, expert_actions).item())
@@ -534,7 +539,10 @@ class FlowMatching(BaseAlgorithm):
     @torch.no_grad()
     def evaluate_policy(self, eval_buffer, num_eval_batches: int = 10) -> dict:
         """Flow-matching loss + one-shot sampling MSE on a held-out buffer (overfitting check)."""
+        # self.actor is the EMA copy (left in train mode) when use_ema, else the online actor itself.
+        actor_was_training = self.actor.training
         self.online_actor.eval()
+        self.actor.eval()
         eval_losses = []
         eval_sample_mse = []
         for _ in range(num_eval_batches):
@@ -561,6 +569,8 @@ class FlowMatching(BaseAlgorithm):
             eval_sample_mse.append(F.mse_loss(sampled, expert_actions).item())
 
         self.online_actor.train()
+        if self.actor is not self.online_actor:
+            self.actor.train(actor_was_training)
         return {
             "eval_loss": float(np.mean(eval_losses)) if eval_losses else float("nan"),
             "eval_sample_mse_error": float(np.mean(eval_sample_mse)) if eval_sample_mse else float("nan"),

@@ -99,7 +99,11 @@ flowdagger:
   # Steps between consecutive human windows (each window = the next H human steps). 1 = a window at every
   # human step (cheap on robomimic); H = back-to-back chunks as on LIBERO.
   human_window_stride: 1
-  min_human_window: 1             # shorter windows (end of a takeover) are padded by repeating the last action
+  # Human windows shorter than this are dropped; kept short windows (end of a takeover) are padded to the
+  # horizon by repeating the last action. null => training.n_action_steps, so everything the steered policy
+  # executes from a window is real human action (the official code inverts full chunks, padding only at
+  # episode end). 1 = keep every window (the previous default).
+  min_human_window: null
   offline_window_stride: 1        # human_window_stride for inverted offline demos (pretraining / warmup)
 
   # ---- inversion of the Euler sampler (actor.num_inference_steps steps) ----
